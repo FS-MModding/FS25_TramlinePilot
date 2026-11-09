@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<modDesc descVersion="116">
+    <author>MModding</author>
+    <version>1.0.0.0</version>
+    <title>
+        <en>Tramline Pilot</en>
+    </title>
+    <description>
+        <en><![CDATA[Tramline Pilot plans the tramlines for every field, shows them in the field and gives you an AI worker that sprays or spreads on them - and only on them. Works with sprayers and with fertiliser spinners and other spreaders.
+
+PLAN YOUR TRAMLINES
+- Stand on a field and press Right Ctrl+M. The field outline is read from the map and a live map preview shows the layout as you change it.
+- Direction: along the longest edge, your vehicle heading, A-B points (Alt+1 / Alt+2), any angle, or as stored.
+- Spacing 6-60 m (your boom or spreading width), 0-4 headland passes, turn radius, worker turns, headland corners, when to do the headland, work and turn speed.
+- Headland tramlines follow the field edge with rounded corners; the main tramlines end on the inner headland tramline.
+- Create tramlines in crop: make the wheel tracks (or a full lane) in the crop straight away. Set the wheel track width (1.50-4.00 m) to match your sprayer; the width of the machine you sit in is marked in the list.
+- Precision Farming's own tramlines: leave them on, switch them off on your tramline fields, or switch them off everywhere.
+- Saved wheelings: every layout is saved, so you can load it again for the next crop or in another savegame on the same map.
+
+SEE THEM IN THE FIELD
+- Alt+4 shows the tramlines: smooth lines on the ground, headland tramlines in amber, the line being worked in green and the way ahead in blue.
+- A green flag marks where the course starts and a chequered flag where it finishes, with the course length or how much is done and how far is left.
+
+LET THE WORKER SPRAY OR SPREAD
+- Park on the headland tramline and press Alt+T. The worker unfolds (if it has to), works the headland and then every tramline, and never leaves the tramlines.
+- Sprayers (self-propelled, mounted or trailed) and fertiliser spinners or other spreaders (mounted or trailed).
+- Back into corners: self-propelled sprayers and mounted sprayers or spinners reverse into sharp headland corners so no corner is missed.
+- Stop it any time (Alt+T or Alt+Q). The job is kept with the savegame and the last worked spot is marked; Alt+T drives back there on the tramlines and carries on exactly where it stopped.
+- Refill with AutoDrive: when the tank or hopper runs empty the worker folds up (if it has to) and takes the tramlines to the field gate, AutoDrive takes it to refill and back, and it carries on where it ran out.
+
+KEYS
+Right Ctrl+M setup menu - Alt+T start/stop the worker - Alt+Q stop the worker - Alt+4 show/hide the tramlines - Alt+1 / Alt+2 set A and B points
+
+NOTES
+- Single player.
+- AutoDrive is only needed for the refill trips (set the field gate as the vehicle's AutoDrive target and the refill point as its 2nd target).
+- Saved wheelings are kept in Documents/My Games/FarmingSimulator2025/modSettings/FS25_TramlinePilot/.
+- Console: tlMenu, tlStart, tlStop, tlNewJob, tlRefill, tlPaint, tlPF, tlWheelings, tlLoad, tlSave, tlOverlay, tlClear, tlReport and more (type tl in the console and press Tab).
+
+BUG REPORTS
+- Tramline Pilot keeps its own log: Documents/My Games/FarmingSimulator2025/modSettings/FS25_TramlinePilot/TramlinePilot_log.txt (the session before is TramlinePilot_log_previous.txt). It has the mod's messages, the machine and settings of every job and any error - without your Windows user name.
+- If something goes wrong, send that file and say what happened. With the developer console on, type tlReport straight away to add a snapshot of the field, job and vehicle.
+- Bug reports and suggestions: github.com/FF-MModding/FS25_TramlinePilot/issues]]></en>
+    </description>
+    <iconFilename>icon_tramlinePilot.dds</iconFilename>
+    <multiplayer supported="false"/>
+
+    <extraSourceFiles>
+        <sourceFile filename="scripts/TramlineLog.lua"/>
+        <sourceFile filename="scripts/TramlineGeom.lua"/>
+        <sourceFile filename="scripts/TramlineFieldUtil.lua"/>
+        <sourceFile filename="scripts/FieldScanner.lua"/>
+        <sourceFile filename="scripts/TramlineGenerator.lua"/>
+        <sourceFile filename="scripts/TramlineStore.lua"/>
+        <sourceFile filename="scripts/TramlineLibrary.lua"/>
+        <sourceFile filename="scripts/TramlineDraw.lua"/>
+        <sourceFile filename="scripts/TramlineOverlay.lua"/>
+        <sourceFile filename="scripts/TramlinePFCompat.lua"/>
+        <sourceFile filename="scripts/TramlineRoute.lua"/>
+        <sourceFile filename="scripts/TramlineAD.lua"/>
+        <sourceFile filename="scripts/TramlinePainter.lua"/>
+        <sourceFile filename="scripts/TramlineDialog.lua"/>
+        <sourceFile filename="scripts/TramlineMenu.lua"/>
+        <sourceFile filename="scripts/TramlineSystem.lua"/>
+    </extraSourceFiles>
+
+    <specializations>
+        <specialization name="tramlineDriver" className="TramlineDriver" filename="scripts/TramlineDriver.lua"/>
+    </specializations>
+
+    <vehicleTypes>
+        <!-- Driver is injected into every drivable vehicle type at load time (see TramlineSystem.lua),
+             so no explicit vehicleType entries are needed here. -->
+    </vehicleTypes>
+
+    <actions>
+        <action name="TRAMLINEPILOT_SET_A"/>
+        <action name="TRAMLINEPILOT_SET_B"/>
+        <action name="TRAMLINEPILOT_MENU"/>
+        <action name="TRAMLINEPILOT_OVERLAY"/>
+        <action name="TRAMLINEPILOT_TOGGLE_DRIVER"/>
+        <action name="TRAMLINEPILOT_STOP_DRIVER"/>
+    </actions>
+
+    <inputBinding>
+        <actionBinding action="TRAMLINEPILOT_SET_A">
+            <binding device="KB_MOUSE_DEFAULT" input="KEY_lalt KEY_1"/>
+        </actionBinding>
+        <actionBinding action="TRAMLINEPILOT_SET_B">
+            <binding device="KB_MOUSE_DEFAULT" input="KEY_lalt KEY_2"/>
+        </actionBinding>
+        <actionBinding action="TRAMLINEPILOT_MENU">
+            <binding device="KB_MOUSE_DEFAULT" input="KEY_rctrl KEY_m"/>
+        </actionBinding>
+        <actionBinding action="TRAMLINEPILOT_OVERLAY">
+            <binding device="KB_MOUSE_DEFAULT" input="KEY_lalt KEY_4"/>
+        </actionBinding>
+        <actionBinding action="TRAMLINEPILOT_TOGGLE_DRIVER">
+            <binding device="KB_MOUSE_DEFAULT" input="KEY_lalt KEY_t"/>
+        </actionBinding>
+        <actionBinding action="TRAMLINEPILOT_STOP_DRIVER">
+            <binding device="KB_MOUSE_DEFAULT" input="KEY_lalt KEY_q"/>
+        </actionBinding>
+    </inputBinding>
+
+    <l10n>
+        <text name="input_TRAMLINEPILOT_SET_A"><en>Tramline Pilot: set A point</en></text>
+        <text name="input_TRAMLINEPILOT_SET_B"><en>Tramline Pilot: set B point</en></text>
+        <text name="input_TRAMLINEPILOT_MENU"><en>Tramline Pilot: open setup menu</en></text>
+        <text name="input_TRAMLINEPILOT_OVERLAY"><en>Tramline Pilot: toggle overlay</en></text>
+        <text name="input_TRAMLINEPILOT_TOGGLE_DRIVER"><en>Tramline Pilot: start/stop AI worker</en></text>
+        <text name="input_TRAMLINEPILOT_STOP_DRIVER"><en>Tramline Pilot: stop AI worker</en></text>
+    </l10n>
+</modDesc>
