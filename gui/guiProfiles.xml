@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8" standalone="no" ?>
+<GUIProfiles>
+    <!-- settings column: anchored to the top, tall enough for every row -->
+    <Profile name="tl_settingsBoxContainer" extends="fs25_aiSettingsBoxContainer" with="anchorTopLeft">
+        <position value="30px -130px" />
+        <size value="620px 810px" />
+    </Profile>
+    <Profile name="tl_settingsBox" extends="fs25_aiSettingsBox" with="anchorTopLeft">
+        <position value="0px 0px" />
+        <size value="620px 810px" />
+    </Profile>
+
+    <!-- one settings row: dark translucent background instead of the missing texture -->
+    <Profile name="tl_row" extends="fs25_aiSettingsContainer">
+        <imageColor value="0.02 0.02 0.02 0.65" />
+        <imageSelectedColor value="0.05 0.05 0.05 0.8" />
+        <imageFocusedColor value="0.05 0.05 0.05 0.8" />
+    </Profile>
+    <Profile name="tl_rowText" extends="fs25_aiSettingsTemplateText">
+        <textColor value="1 1 1 1" />
+        <textSelectedColor value="1 1 1 1" />
+        <textFocusedColor value="1 1 1 1" />
+        <textDisabledColor value="0.6 0.6 0.6 1" />
+    </Profile>
+    <Profile name="tl_rowOption" extends="fs25_aiSettingsMultiTextOption">
+        <textColor value="1 1 1 1" />
+        <textSelectedColor value="1 1 1 1" />
+        <textFocusedColor value="1 1 1 1" />
+        <textDisabledColor value="0.6 0.6 0.6 1" />
+    </Profile>
+
+    <!-- preview panel on the right, same height as the settings column -->
+    <Profile name="tl_previewBox" extends="fs25_aiSettingsMapContainer" with="anchorTopRight">
+        <position value="-30px -130px" />
+        <size value="480px 810px" />
+    </Profile>
+    <Profile name="tl_previewText" extends="fs25_aiSettingsNoFieldFound" with="anchorBottomCenter">
+        <position value="0px 8px" />
+        <textSize value="14px" />
+        <textColor value="1 1 1 1" />
+        <textMaxNumLines value="3" />
+    </Profile>
+</GUIProfiles>

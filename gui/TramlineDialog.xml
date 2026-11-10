@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8" standalone="no" ?>
+<GUI onOpen="onOpen" onClose="onClose" onCreate="onCreate">
+    <GuiElement profile="newLayer" />
+    <Bitmap profile="dialogFullscreenBg" id="dialogBg" />
+
+    <GuiElement profile="fs25_dialogBg" id="dialogElement" size="1200px 1000px" >
+        <ThreePartBitmap profile="fs25_dialogBgMiddleSmall" />
+        <ThreePartBitmap profile="fs25_dialogBgTopSmall" />
+        <ThreePartBitmap profile="fs25_dialogBgBottom" />
+
+        <GuiElement profile="fs25_dialogContentContainer" >
+            <Text profile="fs25_dialogTitle" id="titleText" text="Tramline Pilot" position="0px -30px" />
+            <Text profile="fs25_dialogTitle" id="fieldText" text="" textSize="15px" textMaxNumLines="2" position="0px -70px" />
+
+            <GuiElement profile="tl_settingsBoxContainer" >
+                <ScrollingLayout profile="tl_settingsBox" id="settingsBox">
+                    <Bitmap profile="tl_row">
+                        <Text profile="tl_rowText" text="Direction" />
+                        <MultiTextOption profile="tl_rowOption" id="directionOption" onClick="onClickDirection" focusInit="onOpen"/>
+                    </Bitmap>
+                    <Bitmap profile="tl_row">
+                        <Text profile="tl_rowText" text="Direction angle" />
+                        <MultiTextOption profile="tl_rowOption" id="angleOption" onClick="onClickAngle" />
+                    </Bitmap>
+                    <Bitmap profile="tl_row">
+                        <Text profile="tl_rowText" text="Tramline spacing" />
+                        <MultiTextOption profile="tl_rowOption" id="spacingOption" onClick="onClickSpacing" />
+                    </Bitmap>
+                    <Bitmap profile="tl_row">
+                        <Text profile="tl_rowText" text="Headland passes" />
+                        <MultiTextOption profile="tl_rowOption" id="headlandOption" onClick="onClickHeadland" />
+                    </Bitmap>
+                    <Bitmap profile="tl_row">
+                        <Text profile="tl_rowText" text="Worker turns" />
+                        <MultiTextOption profile="tl_rowOption" id="turnOption" onClick="onClickTurn" />
+                    </Bitmap>
+                    <Bitmap profile="tl_row">
+                        <Text profile="tl_rowText" text="Turn radius" />
+                        <MultiTextOption profile="tl_rowOption" id="radiusOption" onClick="onClickRadius" />
+                    </Bitmap>
+                    <Bitmap profile="tl_row">
+                        <Text profile="tl_rowText" text="Headland corners" />
+                        <MultiTextOption profile="tl_rowOption" id="cornerOption" onClick="onClickCorners" />
+                    </Bitmap>
+                    <Bitmap profile="tl_row">
+                        <Text profile="tl_rowText" text="Spray headland" />
+                        <MultiTextOption profile="tl_rowOption" id="orderOption" onClick="onClickOrder" />
+                    </Bitmap>
+                    <Bitmap profile="tl_row">
+                        <Text profile="tl_rowText" text="Work speed" />
+                        <MultiTextOption profile="tl_rowOption" id="workSpeedOption" onClick="onClickWorkSpeed" />
+                    </Bitmap>
+                    <Bitmap profile="tl_row">
+                        <Text profile="tl_rowText" text="Turn speed" />
+                        <MultiTextOption profile="tl_rowOption" id="turnSpeedOption" onClick="onClickTurnSpeed" />
+                    </Bitmap>
+                    <Bitmap profile="tl_row">
+                        <Text profile="tl_rowText" text="Refill with AutoDrive" />
+                        <MultiTextOption profile="tl_rowOption" id="refillOption" onClick="onClickRefill" />
+                    </Bitmap>
+                    <Bitmap profile="tl_row">
+                        <Text profile="tl_rowText" text="Create tramlines in crop" />
+                        <MultiTextOption profile="tl_rowOption" id="paintOption" onClick="onClickPaint" />
+                    </Bitmap>
+                    <Bitmap profile="tl_row">
+                        <Text profile="tl_rowText" text="Wheel track width" />
+                        <MultiTextOption profile="tl_rowOption" id="trackOption" onClick="onClickTrack" />
+                    </Bitmap>
+                    <Bitmap profile="tl_row">
+                        <Text profile="tl_rowText" text="Show lines" />
+                        <MultiTextOption profile="tl_rowOption" id="linesOption" onClick="onClickLines" />
+                    </Bitmap>
+                    <Bitmap profile="tl_row">
+                        <Text profile="tl_rowText" text="Precision Farming tramlines" />
+                        <MultiTextOption profile="tl_rowOption" id="pfOption" onClick="onClickPF" />
+                    </Bitmap>
+                </ScrollingLayout>
+            </GuiElement>
+
+            <GuiElement profile="tl_previewBox" id="previewBox">
+                <Text profile="tl_previewText" id="previewText" text="" />
+            </GuiElement>
+
+            <ThreePartBitmap profile="fs25_lineSeparatorTop" absoluteSizeOffset="100px 0px" position="0px -110px" />
+        </GuiElement>
+
+        <BoxLayout profile="fs25_dialogButtonBox" >
+            <Button profile="buttonBack" id="backButton" onClick="onClickBack" text="$l10n_button_back" />
+            <Bitmap profile="fs25_dialogButtonBoxSeparator" />
+            <Button profile="buttonCancel" id="clearButton" onClick="onClickClear" text="Clear field" />
+            <Bitmap profile="fs25_dialogButtonBoxSeparator" />
+            <Button profile="buttonActivate" id="libraryButton" onClick="onClickLibrary" text="Saved wheelings" />
+            <Bitmap profile="fs25_dialogButtonBoxSeparator" />
+            <Button profile="buttonOK" id="okButton" onClick="onClickOk" text="Generate" />
+        </BoxLayout>
+    </GuiElement>
+</GUI>

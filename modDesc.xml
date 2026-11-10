@@ -40,7 +40,7 @@ NOTES
 BUG REPORTS
 - Tramline Pilot keeps its own log: Documents/My Games/FarmingSimulator2025/modSettings/FS25_TramlinePilot/TramlinePilot_log.txt (the session before is TramlinePilot_log_previous.txt). It has the mod's messages, the machine and settings of every job and any error - without your Windows user name.
 - If something goes wrong, send that file and say what happened. With the developer console on, type tlReport straight away to add a snapshot of the field, job and vehicle.
-- Bug reports and suggestions: github.com/FF-MModding/FS25_TramlinePilot/issues]]></en>
+- Bug reports and suggestions: github.com/FS-MModding/FS25_TramlinePilot/issues]]></en>
     </description>
     <iconFilename>icon_tramlinePilot.dds</iconFilename>
     <multiplayer supported="false"/>

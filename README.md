@@ -6,9 +6,13 @@ Tramline Pilot plans the tramlines for every field, shows them in the field and 
 
 ## Download
 
-Get **FS25_TramlinePilot.zip** from [Releases](https://github.com/FF-MModding/FS25_TramlinePilot/releases). Put it, still zipped, in `Documents/My Games/FarmingSimulator2025/mods`, then tick Tramline Pilot in the mod list when you load your savegame.
+Get **FS25_TramlinePilot.zip** from [Releases](https://github.com/FS-MModding/FS25_TramlinePilot/releases). Put it, still zipped, in `Documents/My Games/FarmingSimulator2025/mods`, then tick Tramline Pilot in the mod list when you load your savegame.
 
 The green **Code** button downloads the source files, not the mod.
+
+## How to use it
+
+The step-by-step guide is in **[TUTORIAL.md](TUTORIAL.md)**.
 
 ## What it does
 
@@ -47,7 +51,7 @@ The green **Code** button downloads the source files, not the mod.
 
 1. Tramline Pilot keeps its own log: `Documents/My Games/FarmingSimulator2025/modSettings/FS25_TramlinePilot/TramlinePilot_log.txt`. The session before is kept as `TramlinePilot_log_previous.txt`. The log leaves out your Windows user name.
 2. If you have the developer console on, type `tlReport` straight after the problem. This adds a snapshot of the field, the job and the vehicle.
-3. [Open a bug report](https://github.com/FF-MModding/FS25_TramlinePilot/issues/new/choose) and drag the log file into it. Screenshots help too.
+3. [Open a bug report](https://github.com/FS-MModding/FS25_TramlinePilot/issues/new/choose) and drag the log file into it. Screenshots help too.
 
 ## Changelog
 

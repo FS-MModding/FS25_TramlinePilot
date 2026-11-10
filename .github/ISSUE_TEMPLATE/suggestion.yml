@@ -1,0 +1,12 @@
+name: Suggestion
+description: An idea to make Tramline Pilot better
+title: "[Suggestion] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: Your idea
+      description: What should Tramline Pilot do, and when would it help you?
+    validations:
+      required: true

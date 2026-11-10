@@ -1,0 +1,70 @@
+name: Bug report
+description: Something in Tramline Pilot went wrong
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please attach **TramlinePilot_log.txt** from
+        `Documents/My Games/FarmingSimulator2025/modSettings/FS25_TramlinePilot/`.
+        If you have restarted the game since, attach **TramlinePilot_log_previous.txt** instead.
+        With the developer console on, type `tlReport` straight after the problem to add a snapshot.
+  - type: input
+    id: mod-version
+    attributes:
+      label: Tramline Pilot version
+      description: Shown in the game's mod list and on the first line of the log file.
+      placeholder: "1.0.0.0"
+    validations:
+      required: true
+  - type: input
+    id: game-version
+    attributes:
+      label: Game version
+      placeholder: "1.25.1.0"
+  - type: input
+    id: map
+    attributes:
+      label: Map and field
+      placeholder: "e.g. Riverbend Springs, field 14"
+  - type: input
+    id: machine
+    attributes:
+      label: Sprayer or spreader (and the tractor)
+      placeholder: "e.g. a self-propelled sprayer, or a mounted spinner on a tractor"
+  - type: dropdown
+    id: area
+    attributes:
+      label: What were you doing?
+      options:
+        - Setting up tramlines (menu / Generate)
+        - Creating tramlines in the crop
+        - The worker driving, spraying or spreading
+        - Refilling with AutoDrive
+        - Saved wheelings
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you expected instead, and the steps to make it happen again if you know them.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log file and screenshots
+      description: Drag TramlinePilot_log.txt (and any screenshots) into this box.
+    validations:
+      required: true
+  - type: checkboxes
+    id: other-mods
+    attributes:
+      label: Other mods in use
+      options:
+        - label: AutoDrive
+        - label: Courseplay
+        - label: Precision Farming
