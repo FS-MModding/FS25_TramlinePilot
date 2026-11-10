@@ -727,6 +727,7 @@ function TramlineSystem:draw()
 end
 
 function TramlineSystem:updateInner(dt)
+    TramlineLog.update(dt)
     -- PF registers its globals during mod loading; apply our switch on the
     -- first frame so we're sure everything exists.
     if self.pendingPFApply then
