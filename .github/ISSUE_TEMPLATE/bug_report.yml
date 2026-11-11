@@ -15,7 +15,7 @@ body:
     attributes:
       label: Tramline Pilot version
       description: Shown in the game's mod list and on the first line of the log file.
-      placeholder: "1.0.0.0"
+      placeholder: "1.1.0.0"
     validations:
       required: true
   - type: input
