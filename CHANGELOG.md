@@ -18,6 +18,7 @@
 
 ### Fixes
 
+- Tramlines made in the crop no longer turn into another crop. On a map with extra crops they showed as the last crop in the list (onion, for example) on the crop map ([issue #1](https://github.com/FS-MModding/FS25_TramlinePilot/issues/1)).
 - The worker now brakes to a stop at the end of the job. Before, it could drive off with cruise control still on.
 - If the worker hits a script error, it now stops and brakes instead of driving on unsteered, and the error goes in the log.
 

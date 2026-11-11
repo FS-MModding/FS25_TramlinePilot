@@ -117,10 +117,17 @@ end
 
 -- Remove any crop and set the ground to cultivated inside the parallelogram
 -- (sx,sz)->(wx,wz)->(hx,hz). Returns true if at least one layer was written.
+--
+-- The crops share one density map: each cell holds a crop type and a growth
+-- state, and a write through a crop's plane makes the cell that crop. So each
+-- crop is cleared only where that crop grows (filter: its state > 0), the
+-- way the game's own cultivating does it. Writing 0 through every crop's
+-- plane unfiltered left every cleared cell as the LAST crop in the list
+-- (onion on a multifruit map: issue #1).
 function TramlineFieldUtil.cultivateArea(sx, sz, wx, wz, hx, hz)
     local wrote = false
 
-    -- 1. clear every fruit type's growth state (modifiers created once, reused)
+    -- 1. clear each crop where it grows (modifiers and filters created once, reused)
     if TramlineFieldUtil.fruitModifiers == nil then
         TramlineFieldUtil.fruitModifiers = {}
         local fruitTypes = g_fruitTypeManager ~= nil and g_fruitTypeManager:getFruitTypes() or {}
@@ -130,9 +137,14 @@ function TramlineFieldUtil.cultivateArea(sx, sz, wx, wz, hx, hz)
                 local key = tostring(ft.terrainDataPlaneId) .. ":" .. ft.startStateChannel .. ":" .. ft.numStateChannels
                 if not seenPlane[key] then
                     seenPlane[key] = true
-                    local ok, m = pcall(DensityMapModifier.new, ft.terrainDataPlaneId, ft.startStateChannel, ft.numStateChannels, g_currentMission.terrainRootNode)
-                    if ok and m ~= nil then
-                        table.insert(TramlineFieldUtil.fruitModifiers, { m = m, name = ft.name })
+                    local ok, m, f = pcall(function()
+                        local mod = DensityMapModifier.new(ft.terrainDataPlaneId, ft.startStateChannel, ft.numStateChannels, g_currentMission.terrainRootNode)
+                        local fil = DensityMapFilter.new(mod)
+                        fil:setValueCompareParams(DensityValueCompareType.GREATER, 0)
+                        return mod, fil
+                    end)
+                    if ok and m ~= nil and f ~= nil then
+                        table.insert(TramlineFieldUtil.fruitModifiers, { m = m, f = f, name = ft.name })
                     end
                 end
             end
@@ -141,7 +153,7 @@ function TramlineFieldUtil.cultivateArea(sx, sz, wx, wz, hx, hz)
     for _, fm in ipairs(TramlineFieldUtil.fruitModifiers) do
         local ok, err = pcall(function()
             fm.m:setParallelogramWorldCoords(sx, sz, wx, wz, hx, hz, DensityCoordType.POINT_POINT_POINT)
-            fm.m:executeSet(0)
+            fm.m:executeSet(0, fm.f)
         end)
         if ok then wrote = true elseif not fm.warned then
             fm.warned = true
