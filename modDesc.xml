@@ -12,7 +12,7 @@ PLAN YOUR TRAMLINES
 - Stand on a field and press Right Ctrl+M. The field outline is read from the map and a live map preview shows the layout as you change it.
 - Direction: along the longest edge, your vehicle heading, A-B points (Alt+1 / Alt+2), any angle, or as stored.
 - Spacing 6-60 m (your boom or spreading width), 0-4 headland passes, turn radius, worker turns, headland corners, when to do the headland, work and turn speed.
-- Headland direction: as the vehicle faces, or clockwise / anticlockwise - then the worker goes round the headland that way, every turn out of a tramline goes the same way (the field is done in two halves) and it backs into each corner from one side, so each corner needs one corner tramline.
+- Headland direction: as the vehicle faces, or clockwise / anticlockwise - then the worker goes round the headland that way, turns off the headland into the tramlines and back onto it only that way (one curve each instead of two) and backs into each corner from one side (one corner tramline instead of two). The tramlines are still done up and down.
 - Headland tramlines follow the field edge with rounded corners; the main tramlines end on the inner headland tramline.
 - Create tramlines in crop: make the wheel tracks (or a full lane) in the crop straight away. Set the wheel track width (1.50-4.00 m) to match your sprayer; the width of the machine you sit in is marked in the list.
 - Precision Farming's own tramlines: leave them on, switch them off on your tramline fields, or switch them off everywhere.

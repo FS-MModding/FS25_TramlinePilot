@@ -21,8 +21,9 @@
            turnStyle (1 = along the headland tramline, loops only when too
            tight; 2 = loops wherever they fit), anchorToEdge,
            headlandDir ("either" | "cw" | "acw": with cw / acw the worker goes
-           round the headland that way and every turn out of a tramline goes
-           the same way - each block is done in two halves, blk.race),
+           round the headland that way, turns onto and off it only that way
+           (one curve at each end of a block) and backs into each corner from
+           one side; the tramlines are still done up and down),
            preview (true = rings and lines only, for the menu) }
     info: FieldScanner.scan() result (needs info.polygon)
 
@@ -35,8 +36,10 @@
         blocks    = { { lines = {i,...}, conns = { conn, ... }, ends = {E1, E2} } }
                     conn = { kind = "loop"|"ring", from=i, to=i+1, side="A"|"B",
                              pts (loop) | exitArc, entryArc, ringLoop (ring) }
-                    E = { line=i, side="A"|"B", x, z, arcs = { [1]=arc for ring
-                          travel +1, [-1]=arc for travel -1 } }  arc runs ring -> line
+                    E = { line=i, side="A"|"B", x, z, entry = { [sense] = curve ring
+                          (travelling sense) -> line }, exit = { [sense] = curve line ->
+                          ring, then sense } }; with a headland direction one end
+                          has only entry[way] and the other only exit[way]
         bounds, warnings,
         headland = flat segment list of the rings (drawing)
         extras   = flat segment list of loops, curves, junctions (drawing)
@@ -605,8 +608,7 @@ function TramlineGenerator.generate(set, info)
 
     -- turn along the headland tramline: curve onto it, along it, curve into the
     -- next line; nil where the two curves would overlap (turn too tight)
-    -- (forcedSense: that way round, however far)
-    local function ringTurn(la, lb, side, forcedSense)
+    local function ringTurn(la, lb, side)
         if inner == nil then return nil end
         local ax_, az_ = endPoint(la, side)
         local bx_, bz_ = endPoint(lb, side)
@@ -615,7 +617,7 @@ function TramlineGenerator.generate(set, info)
         if ri == nil or ri ~= rib then return nil end
         local L = ringPaths[ri].length
         local fwd = (sb - sa) % L
-        local sense = forcedSense or ((fwd <= L * 0.5) and 1 or -1)
+        local sense = (fwd <= L * 0.5) and 1 or -1
         local dAB = (sense > 0) and fwd or (L - fwd)
         local ex = toRing(la, side, sense)        -- line A -> ring
         local en = toRing(lb, side, -sense)       -- reversed: ring -> line B
@@ -642,87 +644,20 @@ function TramlineGenerator.generate(set, info)
         return { kind = "loop", from = la.id, to = lb.id, side = side, pts = (G.dubinsPoints(path, 0.5)), forced = forced }
     end
 
-    -- A block in two halves, every turn out going 'sense' round the headland:
-    -- up the first line of the first half, down the first of the second half,
-    -- up the second of the first half... (racetrack). nil if it does not fit.
-    local function racePlan(blk, sense)
-        if inner == nil then return nil end
-        local m = #blk.lines
-        local l1, lm = geo.lines[blk.lines[1]], geo.lines[blk.lines[m]]
-        local x1, z1 = endPoint(l1, "B")
-        local xm, zm = endPoint(lm, "B")
-        local r1, s1 = nearestRing(x1, z1)
-        local rm, sm = nearestRing(xm, zm)
-        if r1 == nil or r1 ~= rm then return nil end
-        local L = ringPaths[r1].length
-        -- going 'sense' along side B leads from line 1 towards line m?
-        local up = (((sm - s1) * sense) % L) <= L * 0.5
-        local idx = {}
-        for j = 1, m do idx[j] = up and j or (m + 1 - j) end
-        local k = ceil(m / 2)
-        local seq = {}
-        for i = 1, k do
-            seq[#seq + 1] = { j = idx[i], from = "A" }                                -- first half: A -> B
-            if k + i <= m then seq[#seq + 1] = { j = idx[k + i], from = "B" } end      -- second half: B -> A
-        end
-        local conns = {}
-        for q = 1, #seq - 1 do
-            local a, b = seq[q], seq[q + 1]
-            local c = ringTurn(geo.lines[blk.lines[a.j]], geo.lines[blk.lines[b.j]], (a.from == "A") and "B" or "A", sense)
-            if c == nil or c.kind ~= "ring" then return nil end
-            conns[q] = c
-        end
-        local first, last = seq[1], seq[#seq]
-        local lf, ll = geo.lines[blk.lines[first.j]], geo.lines[blk.lines[last.j]]
-        local lastSide = (last.from == "A") and "B" or "A"
-        local jin = toRing(lf, "A", -sense)           -- reversed: in from the ring travelling 'sense'
-        local jout = toRing(ll, lastSide, sense)
-        if jin == nil or jout == nil then return nil end
-        return { seq = seq, conns = conns, sense = sense,
-                 entry = { line = lf.id, side = "A", pts = G.reverse(jin.pts), s = jin.s, trim = jin.a, ring = jin.ring, j = jin, lineRef = lf },
-                 exit = { line = ll.id, side = lastSide, pts = jout.pts, s = jout.s, trim = jout.a, ring = jout.ring, j = jout, lineRef = ll } }
-    end
-
     local style = set.turnStyle or 1
     local dir = set.headlandDir
-    if dir ~= "cw" and dir ~= "acw" then dir = nil end
+    if (dir ~= "cw" and dir ~= "acw") or inner == nil then dir = nil end
     geo.headlandDir = dir
-    local loopsUsed, ringUsed, forcedUsed, raced = 0, 0, 0, 0
+    local function keepAt(l, side)
+        local x, z = endPoint(l, side)
+        local ri = nearestRing(x, z)
+        return TramlineGenerator.dirSense(inner[ri or 1], dir)
+    end
+    local loopsUsed, ringUsed, forcedUsed, bothWays = 0, 0, 0, 0
     for _, blk in ipairs(geo.blocks) do
         blk.conns = {}
         local m = #blk.lines
-        local race = nil
-        if dir ~= nil and inner ~= nil then
-            local x1, z1 = endPoint(geo.lines[blk.lines[1]], "B")
-            local ri = nearestRing(x1, z1)
-            if ri ~= nil then race = racePlan(blk, TramlineGenerator.dirSense(inner[ri], dir)) end
-        end
-        if race ~= nil then
-            raced = raced + 1
-            blk.race = race
-            for q, c in ipairs(race.conns) do
-                local a, b = race.seq[q], race.seq[q + 1]
-                drawJ(c.jEx); drawJ(c.jEn)
-                recordExit(geo.lines[blk.lines[a.j]], c.side, c.sense, c.jEx)
-                recordExit(geo.lines[blk.lines[b.j]], c.side, -c.sense, c.jEn)
-                ringUsed = ringUsed + 1
-            end
-            local en, ex = race.entry, race.exit
-            drawJ(en.j); drawJ(ex.j)
-            recordExit(en.lineRef, "A", -race.sense, en.j)
-            recordExit(ex.lineRef, ex.side, race.sense, ex.j)
-            -- the block's ends: in and out only this way round
-            local function endOf_(l, side)
-                local x, z, ux, uz = endPoint(l, side)
-                return { line = l.id, side = side, x = x, z = z, ux = ux, uz = uz, entry = {}, exit = {}, ring = en.ring }
-            end
-            local E1, E2 = endOf_(en.lineRef, "A"), endOf_(ex.lineRef, ex.side)
-            E1.entry[race.sense] = { pts = en.pts, s = en.s, trim = en.trim }
-            E2.exit[race.sense] = { pts = ex.pts, s = ex.s, trim = ex.trim }
-            E2.ring = ex.ring
-            blk.ends = { E1, E2 }
-        end
-        for j = 1, (race == nil) and (m - 1) or 0 do
+        for j = 1, m - 1 do
             local la, lb = geo.lines[blk.lines[j]], geo.lines[blk.lines[j + 1]]
             local side = (j % 2 == 1) and "B" or "A"
             local conn
@@ -745,28 +680,59 @@ function TramlineGenerator.generate(set, info)
             end
         end
         -- free ends: line 1 at side A, line m at the side the serpentine leaves it
+        -- entry[sense]: ring (travelling sense) -> line;  exit[sense]: line -> ring, then sense
         local first, last = geo.lines[blk.lines[1]], geo.lines[blk.lines[m]]
         local lastSide = (m % 2 == 1) and "B" or "A"
-        local firstSide = "A"
-        if race == nil then blk.ends = {} end
-        for e, spec in ipairs((race == nil) and { { first, firstSide }, { last, lastSide } } or {}) do
-            local l, side = spec[1], spec[2]
+        local specs = { { first, "A" }, { last, lastSide } }
+        local function newEnd(l, side)
             local ex, ez, ux, uz = endPoint(l, side)
-            -- entry[sense]: ring (travelling sense) -> line;  exit[sense]: line -> ring, then sense
-            local E = { line = l.id, side = side, x = ex, z = ez, ux = ux, uz = uz, entry = {}, exit = {} }
-            if inner ~= nil then
-                for _, sense in ipairs({ 1, -1 }) do
-                    local jn = toRing(l, side, sense)
-                    if jn ~= nil then
-                        E.exit[sense] = { pts = jn.pts, s = jn.s, trim = jn.a }
-                        E.entry[-sense] = { pts = G.reverse(jn.pts), s = jn.s, trim = jn.a }
-                        E.ring = jn.ring
-                        drawJ(jn)
-                        recordExit(l, side, sense, jn)
-                    end
+            return { line = l.id, side = side, x = ex, z = ez, ux = ux, uz = uz, entry = {}, exit = {} }
+        end
+        blk.ends = nil
+        if dir ~= nil then
+            -- one way round the headland: in at one end of the block and out at
+            -- the other, each with the one curve that goes that way round (in
+            -- at line 1 if both curves fit, else in at line m)
+            for _, order in ipairs({ { 1, 2 }, { 2, 1 } }) do
+                local sIn, sOut = specs[order[1]], specs[order[2]]
+                local kIn, kOut = keepAt(sIn[1], sIn[2]), keepAt(sOut[1], sOut[2])
+                local jIn = toRing(sIn[1], sIn[2], -kIn)     -- reversed: in from the ring going kIn
+                local jOut = toRing(sOut[1], sOut[2], kOut)
+                if jIn ~= nil and jOut ~= nil then
+                    local Ein, Eout = newEnd(sIn[1], sIn[2]), newEnd(sOut[1], sOut[2])
+                    Ein.entry[kIn] = { pts = G.reverse(jIn.pts), s = jIn.s, trim = jIn.a }
+                    Ein.ring = jIn.ring
+                    Eout.exit[kOut] = { pts = jOut.pts, s = jOut.s, trim = jOut.a }
+                    Eout.ring = jOut.ring
+                    drawJ(jIn); drawJ(jOut)
+                    recordExit(sIn[1], sIn[2], -kIn, jIn)
+                    recordExit(sOut[1], sOut[2], kOut, jOut)
+                    blk.ends = { [order[1]] = Ein, [order[2]] = Eout }
+                    break
                 end
             end
-            blk.ends[e] = E
+            if blk.ends == nil then bothWays = bothWays + 1 end
+        end
+        if blk.ends == nil then
+            -- either way round: both curves at both ends
+            blk.ends = {}
+            for e, spec in ipairs(specs) do
+                local l, side = spec[1], spec[2]
+                local E = newEnd(l, side)
+                if inner ~= nil then
+                    for _, sense in ipairs({ 1, -1 }) do
+                        local jn = toRing(l, side, sense)
+                        if jn ~= nil then
+                            E.exit[sense] = { pts = jn.pts, s = jn.s, trim = jn.a }
+                            E.entry[-sense] = { pts = G.reverse(jn.pts), s = jn.s, trim = jn.a }
+                            E.ring = jn.ring
+                            drawJ(jn)
+                            recordExit(l, side, sense, jn)
+                        end
+                    end
+                end
+                blk.ends[e] = E
+            end
         end
     end
 
@@ -816,13 +782,13 @@ function TramlineGenerator.generate(set, info)
     if forcedUsed > 0 then
         geo.warnings[#geo.warnings + 1] = string.format("%d turn(s) do not fit the headland - use a smaller turn radius or more headland passes", forcedUsed)
     end
-    if dir ~= nil and raced < #geo.blocks then
-        geo.warnings[#geo.warnings + 1] = string.format("%d of %d part(s) of the field can't be done %s in two halves - the worker turns both ways there",
-            #geo.blocks - raced, #geo.blocks, dir == "cw" and "clockwise" or "anticlockwise")
+    if bothWays > 0 then
+        geo.warnings[#geo.warnings + 1] = string.format("%d of %d part(s) of the field have no room to turn on and off the headland only %s - the worker can turn either way there",
+            bothWays, #geo.blocks, dir == "cw" and "clockwise" or "anticlockwise")
     end
-    geo.loopCount, geo.ringTurnCount, geo.forcedCount, geo.raceCount = loopsUsed, ringUsed, forcedUsed, raced
+    geo.loopCount, geo.ringTurnCount, geo.forcedCount, geo.bothWaysCount = loopsUsed, ringUsed, forcedUsed, bothWays
     TramlineLog.info("[TramlinePilot] field %d: %d tramlines in %d block(s), %d headland ring(s), %d loop turns, %d headland turns%s",
         set.fieldId or -1, #geo.lines, #geo.blocks, H, loopsUsed, ringUsed,
-        dir ~= nil and string.format(", %d block(s) %s in two halves", raced, dir) or "")
+        dir ~= nil and string.format(", headland %s", dir) or "")
     return geo
 end

@@ -113,7 +113,7 @@ function TramlineRoute.buildJob(geo, vx, vz, hx, hz, opts)
     opts = opts or {}
     if geo == nil or geo.lines == nil or #geo.lines == 0 then return nil, "no tramlines on this field" end
     local order = opts.headlandOrder or "first"
-    local dirWay = geo.headlandDir           -- "cw" / "acw": one way round, every turn out that way
+    local dirWay = geo.headlandDir           -- "cw" / "acw": one way round the headland
     local R = geo.radius or 7
     local H = geo.headlands or 0
     local spokes = geo.spokes
@@ -403,23 +403,7 @@ function TramlineRoute.buildJob(geo, vx, vz, hx, hz, opts)
         -- drive the block
         local m = #blk.lines
         local seq = {}
-        if blk.race ~= nil then
-            -- in two halves, every turn out the same way round
-            local race = blk.race
-            for q, item in ipairs(race.seq) do
-                local l = geo.lines[blk.lines[item.j]]
-                local c = race.conns[q]
-                local endTrim = (c ~= nil) and c.exitTrim or ((exitJ ~= nil) and exitJ.trim or 0)
-                driveLine(route, l, item.from, startTrim, endTrim)
-                startTrim = 0
-                if c ~= nil then
-                    add(route, c.exitArc, { work = false, turn = true, kind = "junction" })
-                    along(H, c.ringIndex, c.s0, c.s1, c.sense, { work = false, turn = true, kind = "ring" })
-                    add(route, c.entryArc, { work = false, turn = true, kind = "junction" })
-                    startTrim = c.entryTrim
-                end
-            end
-        elseif reverse then for j = m, 1, -1 do seq[#seq + 1] = j end else for j = 1, m do seq[#seq + 1] = j end end
+        if reverse then for j = m, 1, -1 do seq[#seq + 1] = j end else for j = 1, m do seq[#seq + 1] = j end end
         for qi, j in ipairs(seq) do
             local l = geo.lines[blk.lines[j]]
             local side = entrySideForward(j)

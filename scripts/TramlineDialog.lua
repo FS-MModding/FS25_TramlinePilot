@@ -11,8 +11,9 @@ local TramlineDialog_mt = Class(TramlineDialog, DialogElement)
 TramlineDialog.DIRECTIONS = { "Along longest edge", "Vehicle heading", "A - B points", "Angle", "As stored" }
 TramlineDialog.TURNS      = { "Along headland tramline", "Loops where they fit" }
 TramlineDialog.CORNERS    = { "Round", "Back into corners" }
--- headland direction: as the vehicle faces (turns both ways), or one way
--- round with every turn out of a tramline that way (the field in two halves)
+-- headland direction: as the vehicle faces, or one way round the headland
+-- (onto and off it only that way, one side of each corner; the tramlines are
+-- still done up and down)
 TramlineDialog.HEADLAND_DIRS     = { "As the vehicle faces", "Clockwise", "Anticlockwise" }
 TramlineDialog.HEADLAND_DIR_KEYS = { "either", "cw", "acw" }
 TramlineDialog.ORDERS     = { "First", "Last", "Skip" }

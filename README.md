@@ -20,7 +20,7 @@ The step-by-step guide is in **[TUTORIAL.md](TUTORIAL.md)**.
   - Direction: along the longest edge, your vehicle heading, A-B points (Alt+1 / Alt+2), any angle, or as stored.
   - Spacing 6-60 m (your boom or spreading width) and 0-4 headland passes.
   - Turn radius, worker turns, headland corners, when to do the headland, work and turn speed.
-  - Headland direction: clockwise or anticlockwise sends the worker round that way, with every turn out of a tramline the same way (the field done in two halves) and one corner tramline per corner.
+  - Headland direction: clockwise or anticlockwise sends the worker round the headland that way, with one curve off the headland into the tramlines and one back onto it (not two each) and one corner tramline per corner. The tramlines are still done up and down.
 - **Create tramlines in the crop:** cut the wheel tracks (1.50-4.00 m apart, to match your sprayer) or a full lane straight away. The width of the machine you sit in is marked in the list.
 - **See them in the field:** Alt+4 shows the lines, with a flag where the course starts and a chequered flag where it finishes.
 - **Let the worker spray or spread:** park on the headland tramline and press Alt+T.

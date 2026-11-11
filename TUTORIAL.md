@@ -18,7 +18,7 @@
 - **Direction:** longest edge, vehicle heading, A-B points (Alt+1, Alt+2), an angle, or as stored.
 - **Tramline spacing:** your boom or spreading width (6-60 m).
 - **Headland passes:** 0-4 tramlines round the field edge.
-- **Headland direction:** as the vehicle faces, or clockwise / anticlockwise. Clockwise or anticlockwise sends the worker round the headland that way, and every turn out of a tramline goes the same way: right for clockwise, left for anticlockwise. The field is done in two halves (up a tramline in one half, down one in the other), so there is more driving along the headland. With Back into corners, each corner gets one corner tramline (from the side the worker comes round to) instead of two.
+- **Headland direction:** as the vehicle faces, or clockwise / anticlockwise. Clockwise or anticlockwise sends the worker round the headland that way. Where it turns off the headland into the tramlines, and back onto the headland when they are done, there is one curve each (going that way round) instead of two. The tramlines are still done up and down, turning one way at one end and the other way at the other end. With Back into corners, each corner gets one corner tramline (from the side the worker comes round to) instead of two.
 - **Worker turns:** along the headland tramline, or loops where they fit.
 - **Turn radius:** your machine's turning circle (4-15 m).
 - **Headland corners:** round, or back into corners (self-propelled sprayers, mounted sprayers and spinners).

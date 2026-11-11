@@ -5,8 +5,9 @@
 ### New
 
 - **Headland direction:** a new row in the setup menu, under Headland passes (it needs at least one headland pass). Choose As the vehicle faces, Clockwise or Anticlockwise.
-  - With Clockwise or Anticlockwise, the worker always goes round the headland that way and every turn out of a tramline goes the same way: right for clockwise, left for anticlockwise.
-  - To do this, each part of the field is worked in two halves: up a tramline in one half, down one in the other. That means a bit more driving along the headland. A part that can't be split is worked up and back as before, and the menu tells you.
+  - With Clockwise or Anticlockwise, the worker always goes round the headland that way.
+  - Where it turns off the headland into the tramlines, and back onto the headland when they are done, there is one curve each (going that way round) instead of two. Where a curve doesn't fit, that part of the field keeps both and the menu tells you.
+  - The tramlines are still done up and down, turning one way at one end and the other way at the other end.
   - With Back into corners, the worker backs into each corner from the same side, so each corner needs one corner tramline instead of two.
   - If you start facing the wrong way, the worker won't set off. The start marker shows "Turn round" and which way the field goes.
   - Saved wheelings remember the direction.
