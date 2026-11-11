@@ -141,6 +141,10 @@ function TramlineOverlay:draw()
         elseif ps.unfinished then
             accent = O.COLOR_LAST
             title, sub = "Stopped here", "Drive back here to carry on"
+        elseif ps.wrongWay then
+            accent = O.COLOR_AWAY
+            title = "Turn round"
+            sub = string.format("This field goes %s - start facing that way", ps.way == "cw" and "clockwise" or "anticlockwise")
         elseif ps.ready then
             title = ps.joined and "Start from this tramline" or "Start here"
             sub = "Alt+T starts the tramline worker"

@@ -20,7 +20,7 @@ TramlineLibrary.MOD_FOLDER = "FS25_TramlinePilot"
 -- set fields kept in a wheeling, by type
 TramlineLibrary.FLOATS  = { "ax", "az", "dx", "dz", "offset", "spacing", "turnRadius", "refX", "refZ", "trackWidth" }
 TramlineLibrary.INTS    = { "headlands", "turnStyle" }
-TramlineLibrary.STRINGS = { "headlandOrder", "corners" }
+TramlineLibrary.STRINGS = { "headlandOrder", "corners", "headlandDir" }
 TramlineLibrary.BOOLS   = { "anchorToEdge", "refillAD" }
 
 local function safe(s)
@@ -144,6 +144,7 @@ function TramlineLibrary.describe(w)
     local v = w.values
     local s = string.format("%s  (%g m, %d headland pass%s", w.name, v.spacing or 0, v.headlands or 0,
         (v.headlands or 0) == 1 and "" or "es")
+    if v.headlandDir == "cw" then s = s .. ", clockwise" elseif v.headlandDir == "acw" then s = s .. ", anticlockwise" end
     if w.saved ~= nil and w.saved ~= "" then s = s .. ", " .. w.saved end
     return s .. ")"
 end

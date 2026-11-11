@@ -31,6 +31,10 @@
                         <MultiTextOption profile="tl_rowOption" id="headlandOption" onClick="onClickHeadland" />
                     </Bitmap>
                     <Bitmap profile="tl_row">
+                        <Text profile="tl_rowText" text="Headland direction" />
+                        <MultiTextOption profile="tl_rowOption" id="headlandDirOption" onClick="onClickHeadlandDir" />
+                    </Bitmap>
+                    <Bitmap profile="tl_row">
                         <Text profile="tl_rowText" text="Worker turns" />
                         <MultiTextOption profile="tl_rowOption" id="turnOption" onClick="onClickTurn" />
                     </Bitmap>

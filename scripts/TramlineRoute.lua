@@ -113,6 +113,7 @@ function TramlineRoute.buildJob(geo, vx, vz, hx, hz, opts)
     opts = opts or {}
     if geo == nil or geo.lines == nil or #geo.lines == 0 then return nil, "no tramlines on this field" end
     local order = opts.headlandOrder or "first"
+    local dirWay = geo.headlandDir           -- "cw" / "acw": one way round, every turn out that way
     local R = geo.radius or 7
     local H = geo.headlands or 0
     local spokes = geo.spokes
@@ -292,6 +293,15 @@ function TramlineRoute.buildJob(geo, vx, vz, hx, hz, opts)
         local rp = ringPaths[st.level][st.idx]
         local _, _, tx, tz = G.pointAt(rp, st.s)
         local sense = ((hx or 1) * tx + (hz or 0) * tz) >= 0 and 1 or -1
+        if dirWay ~= nil then
+            -- the field's headland direction: start facing that way round
+            local want = TramlineGenerator.dirSense(geo.rings[st.level][st.idx], dirWay)
+            if ((hx or 1) * tx + (hz or 0) * tz) * want < -0.3 then
+                return nil, string.format("face %s along the headland tramline to start (this field goes %s)",
+                    dirWay == "cw" and "clockwise" or "anticlockwise", dirWay == "cw" and "clockwise" or "anticlockwise")
+            end
+            sense = want
+        end
         cur = { level = st.level, idx = st.idx, s = st.s, sense = sense }
         add(route, { { st.x, st.z } }, { work = false, kind = "start" })
         if order == "first" then
@@ -344,7 +354,9 @@ function TramlineRoute.buildJob(geo, vx, vz, hx, hz, opts)
         local exitSense, exitJ = cur.sense, nil
         if H > 0 then
             local bestD = math.huge
-            for _, sense in ipairs({ cur.sense, -cur.sense }) do
+            local senses = { cur.sense, -cur.sense }
+            if dirWay ~= nil and X.exit[cur.sense] ~= nil then senses = { cur.sense } end    -- one way round
+            for _, sense in ipairs(senses) do
                 local xj = X.exit[sense]
                 if xj ~= nil then
                     local d = 0
@@ -391,7 +403,23 @@ function TramlineRoute.buildJob(geo, vx, vz, hx, hz, opts)
         -- drive the block
         local m = #blk.lines
         local seq = {}
-        if reverse then for j = m, 1, -1 do seq[#seq + 1] = j end else for j = 1, m do seq[#seq + 1] = j end end
+        if blk.race ~= nil then
+            -- in two halves, every turn out the same way round
+            local race = blk.race
+            for q, item in ipairs(race.seq) do
+                local l = geo.lines[blk.lines[item.j]]
+                local c = race.conns[q]
+                local endTrim = (c ~= nil) and c.exitTrim or ((exitJ ~= nil) and exitJ.trim or 0)
+                driveLine(route, l, item.from, startTrim, endTrim)
+                startTrim = 0
+                if c ~= nil then
+                    add(route, c.exitArc, { work = false, turn = true, kind = "junction" })
+                    along(H, c.ringIndex, c.s0, c.s1, c.sense, { work = false, turn = true, kind = "ring" })
+                    add(route, c.entryArc, { work = false, turn = true, kind = "junction" })
+                    startTrim = c.entryTrim
+                end
+            end
+        elseif reverse then for j = m, 1, -1 do seq[#seq + 1] = j end else for j = 1, m do seq[#seq + 1] = j end end
         for qi, j in ipairs(seq) do
             local l = geo.lines[blk.lines[j]]
             local side = entrySideForward(j)
@@ -461,8 +489,8 @@ function TramlineRoute.layoutSignature(geo)
     local n, tot = #geo.lines, 0
     for _, l in ipairs(geo.lines) do tot = tot + (l.len or 0) end
     local a, b = geo.lines[1], geo.lines[n]
-    return string.format("%d/%d/%.1f/%.0f/%.0f,%.0f/%.0f,%.0f", n, geo.headlands or 0, geo.spacing or 0, tot,
-        a[1], a[2], b[3], b[4])
+    return string.format("%d/%d/%.1f/%.0f/%.0f,%.0f/%.0f,%.0f%s", n, geo.headlands or 0, geo.spacing or 0, tot,
+        a[1], a[2], b[3], b[4], geo.headlandDir ~= nil and ("/" .. geo.headlandDir) or "")
 end
 
 local function segLen(a, b) return sqrt((b[1] - a[1]) ^ 2 + (b[2] - a[2]) ^ 2) end
@@ -753,8 +781,10 @@ function TramlineRoute.exitRoute(geo, route, fromIx, vx, vz, gate)
         local r = ringSegment(geo, route, i)
         if r ~= nil then
             if i == fromIx then
+                -- on it already: from a metre ahead (a sideways hop to the
+                -- line under the vehicle could never be passed)
                 local rp = TramlineRoute.ringPathsOf(geo)[r.level][r.idx]
-                r.s = (G.project(rp, vx, vz))
+                r.s = ((G.project(rp, vx, vz)) + r.sense * 1.0) % rp.length
             end
             ring = r
             break
@@ -1245,7 +1275,11 @@ function TramlineRoute.toGate(geo, route, fromIx, vx, vz, hx, hz, gate)
         for i = max(1, fromIx or 1), #route - 1 do
             local r = ringSegment(geo, route, i)
             if r ~= nil then
-                if i == fromIx then r.s = (G.project(paths[r.level][r.idx], vx, vz)) end
+                if i == fromIx then
+                    -- on it already: from a metre ahead (see exitRoute)
+                    local rp = paths[r.level][r.idx]
+                    r.s = ((G.project(rp, vx, vz)) + r.sense * 1.0) % rp.length
+                end
                 entries[#entries + 1] = { level = r.level, idx = r.idx, s = r.s, sense = r.sense, jobPts = pts,
                                           len = polyLen(pts, vx, vz), how = "job" }
                 break
@@ -1282,8 +1316,15 @@ function TramlineRoute.startPoint(geo, vx, vz, hx, hz)
                 local s, px, pz, d = G.project(rp, vx, vz)
                 if best == nil or d < best.d then
                     local _, _, tx, tz = G.pointAt(rp, s)
-                    local sense = ((hx or 1) * tx + (hz or 0) * tz) >= 0 and 1 or -1
-                    best = { x = px, z = pz, dirX = tx * sense, dirZ = tz * sense, d = d }
+                    local facing = (hx or 1) * tx + (hz or 0) * tz
+                    local sense = facing >= 0 and 1 or -1
+                    local wrongWay = false
+                    if geo.headlandDir ~= nil then
+                        -- the field's way round; facing the other way it can't set off
+                        sense = TramlineGenerator.dirSense(lp, geo.headlandDir)
+                        wrongWay = facing * sense < -0.3
+                    end
+                    best = { x = px, z = pz, dirX = tx * sense, dirZ = tz * sense, d = d, wrongWay = wrongWay, way = geo.headlandDir }
                 end
             end
         end

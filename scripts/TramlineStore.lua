@@ -36,6 +36,7 @@ function TramlineStore.newSet(fieldId)
         refillAD = false,           -- out of spray: refill with AutoDrive
         corners = "round",          -- "round" | "reverse" (back into the headland corners)
         trackWidth = 2.0,           -- m between the wheel centres, for the tracks created in the crop
+        headlandDir = "either",     -- "either" (as the vehicle faces) | "cw" | "acw" (one way round, turns all that way)
     }
 end
 
@@ -63,6 +64,7 @@ function TramlineStore:getOrCreateSet(fieldId)
             turnStyle = 1,              -- 1 = along the headland tramline, 2 = loops
             headlandOrder = "first",    -- "first" | "last" | "off"
             trackWidth = 2.0,
+            headlandDir = "either",
         }
         self.sets[fieldId] = set
     end
@@ -222,6 +224,7 @@ function TramlineStore:save()
         xmlFile:setBool(key .. "#refillAD", set.refillAD == true)
         xmlFile:setString(key .. "#corners", set.corners or "round")
         xmlFile:setFloat(key .. "#trackWidth", set.trackWidth or 2.0)
+        xmlFile:setString(key .. "#headlandDir", set.headlandDir or "either")
         if set.refX ~= nil then
             xmlFile:setFloat(key .. "#refX", set.refX)
             xmlFile:setFloat(key .. "#refZ", set.refZ)
@@ -291,6 +294,7 @@ function TramlineStore:load()
                 refillAD = xmlFile:getBool(key .. "#refillAD", false),
                 corners = xmlFile:getString(key .. "#corners", "round"),
                 trackWidth = xmlFile:getFloat(key .. "#trackWidth", 2.0),
+                headlandDir = xmlFile:getString(key .. "#headlandDir", "either"),
                 refX = xmlFile:getFloat(key .. "#refX"),
                 refZ = xmlFile:getFloat(key .. "#refZ"),
             }

@@ -11,6 +11,10 @@ local TramlineDialog_mt = Class(TramlineDialog, DialogElement)
 TramlineDialog.DIRECTIONS = { "Along longest edge", "Vehicle heading", "A - B points", "Angle", "As stored" }
 TramlineDialog.TURNS      = { "Along headland tramline", "Loops where they fit" }
 TramlineDialog.CORNERS    = { "Round", "Back into corners" }
+-- headland direction: as the vehicle faces (turns both ways), or one way
+-- round with every turn out of a tramline that way (the field in two halves)
+TramlineDialog.HEADLAND_DIRS     = { "As the vehicle faces", "Clockwise", "Anticlockwise" }
+TramlineDialog.HEADLAND_DIR_KEYS = { "either", "cw", "acw" }
 TramlineDialog.ORDERS     = { "First", "Last", "Skip" }
 TramlineDialog.ORDER_KEYS = { "first", "last", "off" }
 TramlineDialog.RADIUS_MIN, TramlineDialog.RADIUS_MAX = 4, 15            -- m
@@ -119,6 +123,7 @@ function TramlineDialog:onOpen()
     self.radiusOption:setTexts(buildRadii())
     self.orderOption:setTexts(TramlineDialog.ORDERS)
     self.cornerOption:setTexts(TramlineDialog.CORNERS)
+    self.headlandDirOption:setTexts(TramlineDialog.HEADLAND_DIRS)
     self.refillOption:setTexts(TramlineDialog.ONOFF)
     self.refillOption:setDisabled(TramlineAD.get() == nil)
 
@@ -164,6 +169,10 @@ function TramlineDialog:syncRows()
     self.orderOption:setState(oi)
     self.cornerOption:setState(set.corners == "reverse" and 2 or 1)
     self.cornerOption:setDisabled((set.headlands or 0) < 1)
+    local di = 1
+    for i, k in ipairs(TramlineDialog.HEADLAND_DIR_KEYS) do if k == set.headlandDir then di = i end end
+    self.headlandDirOption:setState(di)
+    self.headlandDirOption:setDisabled((set.headlands or 0) < 1)
     self.refillOption:setState(set.refillAD and 2 or 1)
     self.trackOption:setState(trackIndex(set.trackWidth))
     self:updatePreview()
@@ -404,9 +413,14 @@ function TramlineDialog:onClickSpacing(state)   self.state.set.spacing = state +
 function TramlineDialog:onClickHeadland(state)
     self.state.set.headlands = state - 1
     self.cornerOption:setDisabled(state - 1 < 1)
+    self.headlandDirOption:setDisabled(state - 1 < 1)
     self:updatePreview()
 end
 function TramlineDialog:onClickCorners(state)  self.state.set.corners = (state == 2) and "reverse" or "round" end
+function TramlineDialog:onClickHeadlandDir(state)
+    self.state.set.headlandDir = TramlineDialog.HEADLAND_DIR_KEYS[state] or "either"
+    self:updatePreview()
+end
 function TramlineDialog:onClickWorkSpeed(state)
     self.system.store.workSpeed = state + TramlineDialog.WORK_SPEED_MIN - 1
     self.system.store.isDirty = true

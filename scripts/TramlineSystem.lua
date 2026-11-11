@@ -62,8 +62,8 @@ end
 function TramlineSystem.describeSet(set)
     if set == nil then return "none" end
     local dir = math.deg(math.atan2(set.dx or 0, -(set.dz or 1))) % 360
-    return string.format("spacing %g m, direction %.0f deg, %d headland pass(es) done %s, corners %s, turns %s, turn radius %g m, wheel track %.2f m, AutoDrive refill %s",
-        set.spacing or 0, dir, set.headlands or 0, tostring(set.headlandOrder or "first"), tostring(set.corners or "round"),
+    return string.format("spacing %g m, direction %.0f deg, %d headland pass(es) done %s going %s, corners %s, turns %s, turn radius %g m, wheel track %.2f m, AutoDrive refill %s",
+        set.spacing or 0, dir, set.headlands or 0, tostring(set.headlandOrder or "first"), tostring(set.headlandDir or "either"), tostring(set.corners or "round"),
         (set.turnStyle == 2) and "loops" or "along the headland", set.turnRadius or 0, set.trackWidth or 2,
         set.refillAD and "on" or "off")
 end
@@ -283,6 +283,10 @@ function TramlineSystem:planStart(fieldId, vx, vz, hx, hz, forceNew, preview, ve
 
     -- 2. a new job from a headland tramline (the usual way)
     local sp = TramlineRoute.startPoint(geo, vx, vz, hx, hz)
+    if sp ~= nil and sp.ready and sp.wrongWay then
+        -- on the headland tramline, facing against the field's way round
+        return { kind = "away", wrongWay = true, way = sp.way, x = sp.x, z = sp.z, dirX = sp.dirX, dirZ = sp.dirZ }
+    end
     if sp ~= nil and sp.ready then
         local at = { ix = 1, skipped = 0, x = sp.x, z = sp.z, dirX = sp.dirX, dirZ = sp.dirZ }
         local plan = { kind = "new", at = at, job = { sx = vx, sz = vz, hx = hx, hz = hz, order = order, corners = corners, boomBack = boomBack } }
@@ -799,7 +803,8 @@ function TramlineSystem:updateInner(dt)
                     end
                     self.previewStart = { x = p.x, z = p.z, nx = p.x + (p.dirX or 0), nz = p.z + (p.dirZ or 0),
                                           ready = plan.kind ~= "away", kind = plan.kind, pct = plan.pct,
-                                          joined = plan.joined, unfinished = plan.unfinished }
+                                          joined = plan.joined, unfinished = plan.unfinished,
+                                          wrongWay = plan.wrongWay, way = plan.way }
                     if plan.kind == "choice" then
                         local ps = self.previewStart
                         local okW, w = pcall(TramlineDriver.toolWords, v)
@@ -809,7 +814,7 @@ function TramlineSystem:updateInner(dt)
                         ps.backWhy = plan.backWhy
                         ps.skipped = plan.at and plan.at.skipped or nil
                     end
-                    if plan.kind == "away" then self.previewStart.fromX, self.previewStart.fromZ = x, z end
+                    if plan.kind == "away" and not plan.wrongWay then self.previewStart.fromX, self.previewStart.fromZ = x, z end
                     local okC, course = pcall(self.courseFor, self, fieldId, plan, x, z, hx, hz)
                     if okC then
                         self.course = course

@@ -591,6 +591,11 @@ function TramlineDriver.startPlan(self, fieldId, plan)
     local sys = g_tramlineSystem
     local geo = sys.store:getGeometry(fieldId)
     local set = sys.store:getSet(fieldId) or {}
+    if plan ~= nil and plan.wrongWay then
+        local way = plan.way == "cw" and "clockwise" or "anticlockwise"
+        sys:notify(string.format("Tramline worker: this field goes %s round the headland - turn round to start", way))
+        return
+    end
     if geo == nil or plan == nil or plan.kind == "away" or plan.kind == "choice" then
         sys:notify("Tramline worker: drive onto the headland tramline (or a tramline) to start")
         return

@@ -18,6 +18,7 @@
 - **Direction:** longest edge, vehicle heading, A-B points (Alt+1, Alt+2), an angle, or as stored.
 - **Tramline spacing:** your boom or spreading width (6-60 m).
 - **Headland passes:** 0-4 tramlines round the field edge.
+- **Headland direction:** as the vehicle faces, or clockwise / anticlockwise. Clockwise or anticlockwise sends the worker round the headland that way, and every turn out of a tramline goes the same way: right for clockwise, left for anticlockwise. The field is done in two halves (up a tramline in one half, down one in the other), so there is more driving along the headland. With Back into corners, each corner gets one corner tramline (from the side the worker comes round to) instead of two.
 - **Worker turns:** along the headland tramline, or loops where they fit.
 - **Turn radius:** your machine's turning circle (4-15 m).
 - **Headland corners:** round, or back into corners (self-propelled sprayers, mounted sprayers and spinners).
@@ -48,7 +49,7 @@
    - On the spot where it stopped, it carries on.
    - Anywhere else, choose Drive back there, Carry on from here or New job.
 
-- With Back into corners, the sprayer or spinner reverses into sharp headland corners so none are missed (not trailed machines).
+- With Back into corners, the sprayer or spinner reverses into sharp headland corners so none are missed (not trailed machines). With a Headland direction set it always backs into a corner from the same side.
 - An unfinished job is kept when you save, so you can carry on another day.
 
 ## Refilling with AutoDrive
@@ -101,6 +102,7 @@
 ## If something goes wrong
 
 - **"Drive onto the headland tramline":** you are not on a tramline; drive to the amber marker.
+- **"Turn round":** the field's Headland direction is clockwise or anticlockwise and the vehicle faces the other way. Turn round on the headland tramline, or on a tramline face the way it is driven.
 - **It won't back into corners:** it needs a self-propelled sprayer or a mounted sprayer or spinner, a headland pass and Back into corners.
 - **Refill doesn't start:** check the AutoDrive target is a marker at the field edge and the 2nd target is the refill point.
 - **The unfinished job has gone:** it is dropped when you generate a different layout.
