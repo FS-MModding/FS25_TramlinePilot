@@ -87,6 +87,34 @@ function TramlineFieldUtil.isOnFieldPoint(fieldId, x, z)
     return TramlineFieldUtil.getFieldIdAt(x, z) == fieldId
 end
 
+-- True if a hedge, wall, fence, tree or building stands at x,z: a 2 m box from
+-- 0.2 m above the ground (collision flags as Courseplay's obstacle checks).
+-- Vehicles and the terrain don't count. If it can't be checked: true, so a
+-- strip is never crossed blind.
+TramlineFieldUtil.obstacleHits = 0
+function TramlineFieldUtil.hasObstacleAt(x, z)
+    if overlapBox == nil or CollisionFlag == nil or g_currentMission == nil then return true end
+    local ok = pcall(function()
+        local y = getTerrainHeightAtWorldPos(g_currentMission.terrainRootNode, x, 0, z)
+        local mask = CollisionFlag.DEFAULT + CollisionFlag.TREE + CollisionFlag.BUILDING + CollisionFlag.STATIC_OBJECT
+        TramlineFieldUtil.obstacleHits = 0
+        overlapBox(x, y + 1.2, z, 0, 0, 0, 1.0, 1.0, 1.0, "onObstacleOverlap", TramlineFieldUtil, mask, true, true, true, true)
+    end)
+    if not ok then return true end
+    return TramlineFieldUtil.obstacleHits > 0
+end
+
+function TramlineFieldUtil:onObstacleOverlap(transformId)
+    if transformId == nil or transformId == 0 then return end
+    if getHasClassId ~= nil and ClassIds ~= nil and ClassIds.TERRAIN_TRANSFORM_GROUP ~= nil
+        and getHasClassId(transformId, ClassIds.TERRAIN_TRANSFORM_GROUP) then
+        return
+    end
+    local obj = g_currentMission ~= nil and g_currentMission.nodeToObject ~= nil and g_currentMission.nodeToObject[transformId] or nil
+    if obj ~= nil and obj.getRootVehicle ~= nil then return end     -- a vehicle
+    TramlineFieldUtil.obstacleHits = TramlineFieldUtil.obstacleHits + 1
+end
+
 -- The map's own outline of the field (as drawn by the map maker), or nil.
 -- Returns a list of {x, z}.
 function TramlineFieldUtil.getFieldPolygon(field)

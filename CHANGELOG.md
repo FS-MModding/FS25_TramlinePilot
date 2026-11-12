@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0.1 (12 November 2026)
+
+### Fixes
+
+- On fields made from two old fields, where a hedge or wall between them has been taken out, the headland no longer splits in two round the strip where it stood. The strip isn't field ground, so the outline used to go round it. Tramline Pilot now plans straight over a strip like that (up to about 8 m wide) when the map has it as one field and nothing stands in it. Where a hedge, wall, fence or trees are still there, it still goes round.
+
 ## 1.1.0.0 (11 November 2026)
 
 ### New

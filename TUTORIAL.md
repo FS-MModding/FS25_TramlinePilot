@@ -109,6 +109,7 @@
 - **No lines:** press Alt+4.
 - **It can't follow the corners:** set Turn radius to your machine's turning circle.
 - **Gaps in the wheel tracks:** press Generate again with Create tramlines in crop set to Wheel tracks.
+- **The headland goes round a line across the field:** on maps where two fields were joined by taking out a hedge or wall, the ground where it stood isn't field. Tramline Pilot plans straight over a strip like that (up to about 8 m wide) when nothing stands in it, but keeps going round it if a hedge, wall, fence or trees are still there.
 
 ## Reporting a bug
 
