@@ -86,6 +86,15 @@ local function buildRadii()
     return t
 end
 
+-- "Field 9", or "Fields 9 + 18 (joined)" for fields joined by ploughing between them
+function TramlineDialog.fieldName(info)
+    local joined = info.joinedWith or {}
+    if #joined == 0 then return string.format("Field %d", info.fieldId) end
+    local ids = { tostring(info.fieldId) }
+    for _, j in ipairs(joined) do ids[#ids + 1] = tostring(j) end
+    return string.format("Fields %s (joined)", table.concat(ids, " + "))
+end
+
 -- angle in degrees (0 = north, clockwise) of a world direction (FS: +x east, -z north)
 local function angleOf(dx, dz)
     local a = math.deg(TramlineGeom.atan2(dx, -dz))
@@ -114,8 +123,8 @@ function TramlineDialog:onOpen()
     local st = self.state
     local sys = self.system
 
-    self.fieldText:setText(string.format("Field %d  -  %.1f ha  (approx. %.0f x %.0f m)",
-        st.info.fieldId, st.info.areaHa, st.info.edgeLength, st.info.edgeWidth))
+    self.fieldText:setText(string.format("%s  -  %.1f ha  (approx. %.0f x %.0f m)",
+        TramlineDialog.fieldName(st.info), st.info.areaHa, st.info.edgeLength, st.info.edgeWidth))
 
     self.angleOption:setTexts(buildAngles())
     self.spacingOption:setTexts(buildSpacings())

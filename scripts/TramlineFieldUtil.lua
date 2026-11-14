@@ -43,12 +43,38 @@ function TramlineFieldUtil.getFieldAt(x, z)
     return nil
 end
 
--- Field id (or nil) for a world position.
-function TramlineFieldUtil.getFieldIdAt(x, z)
+-- Fields joined into another field's layout: [field id] = id of the field
+-- the layout belongs to (shared with TramlineStore.joins, saved with it).
+TramlineFieldUtil.joins = TramlineFieldUtil.joins or {}
+
+-- Field id (or nil) of the farmland at a world position, as the map has it.
+function TramlineFieldUtil.getRawFieldIdAt(x, z)
     local field = TramlineFieldUtil.getFieldAt(x, z)
     if field == nil then return nil end
     if field.getId ~= nil then return field:getId() end
     return field.fieldId
+end
+
+-- Field id (or nil) for a world position. A field joined into another
+-- field's layout (fields joined by ploughing between them) counts as that one
+-- while its land is owned (once sold it is a field of its own again).
+function TramlineFieldUtil.getFieldIdAt(x, z)
+    local id = TramlineFieldUtil.getRawFieldIdAt(x, z)
+    if id == nil then return nil end
+    local main = TramlineFieldUtil.joins[id]
+    if main ~= nil and TramlineFieldUtil.getOwnerAt(x, z) ~= nil then return main end
+    return id
+end
+
+-- Farm that owns the farmland at a world position (nil: nobody, or unknown).
+function TramlineFieldUtil.getOwnerAt(x, z)
+    local ok, owner = pcall(function()
+        local farmland = g_farmlandManager:getFarmlandAtWorldPosition(x, z)
+        if farmland == nil then return nil end
+        return g_farmlandManager:getFarmlandOwner(farmland.id)
+    end)
+    if not ok or owner == nil or owner <= 0 then return nil end
+    return owner
 end
 
 -- True if the ground at x,z is actual field ground (not grass, track or trees).

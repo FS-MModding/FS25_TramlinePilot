@@ -14,8 +14,47 @@ function TramlineStore.new()
     self.sets = {}          -- [fieldId] = set
     self.geometry = {}      -- [fieldId] = TramlineGenerator.generate(set)
     self.jobs = {}          -- [fieldId] = the worker job in progress (see getJob)
+    self.joins = {}         -- [fieldId] = field whose layout this field is joined into
+    if TramlineFieldUtil ~= nil then TramlineFieldUtil.joins = self.joins end
     self.isDirty = false
     return self
+end
+
+-- Fields joined into this field's layout (fields joined by ploughing the land
+-- between them): their own layouts go, and they count as this field from now
+-- on. Fields no longer joined are let go.
+function TramlineStore:updateJoins(fieldId, list)
+    local keep = {}
+    for _, j in ipairs(list or {}) do
+        if j ~= fieldId then
+            keep[j] = true
+            if self.sets[j] ~= nil then
+                TramlineLog.info("[TramlinePilot] field %d is joined into field %d: its own tramlines are replaced", j, fieldId)
+                self:removeSet(j)
+            end
+            for k, v in pairs(self.joins) do
+                if v == j then self.joins[k] = fieldId end
+            end
+            if self.joins[j] ~= fieldId then self.isDirty = true end
+            self.joins[j] = fieldId
+        end
+    end
+    for k, v in pairs(self.joins) do
+        if v == fieldId and not keep[k] then
+            self.joins[k] = nil
+            self.isDirty = true
+        end
+    end
+end
+
+-- Other fields joined into a field's layout, sorted.
+function TramlineStore:getJoined(fieldId)
+    local list = {}
+    for k, v in pairs(self.joins) do
+        if v == fieldId then list[#list + 1] = k end
+    end
+    table.sort(list)
+    return list
 end
 
 function TramlineStore:getSet(fieldId)
@@ -123,6 +162,9 @@ function TramlineStore:removeSet(fieldId)
     self.geometry[fieldId] = nil
     self.jobs[fieldId] = nil
     if self.fieldInfo ~= nil then self.fieldInfo[fieldId] = nil end
+    for k, v in pairs(self.joins) do
+        if v == fieldId then self.joins[k] = nil end
+    end
     self.isDirty = true
 end
 
@@ -150,6 +192,7 @@ end
 
 function TramlineStore:removeAll()
     self.sets, self.geometry, self.fieldInfo, self.jobs = {}, {}, {}, {}
+    for k in pairs(self.joins) do self.joins[k] = nil end
     self.isDirty = true
 end
 
@@ -157,7 +200,10 @@ function TramlineStore:regenerate(fieldId)
     local set = self.sets[fieldId]
     if set == nil then return nil end
     local info = self:getFieldInfo(fieldId)
-    if info ~= nil then set.scanBounds = info.bounds end
+    if info ~= nil then
+        set.scanBounds = info.bounds
+        self:updateJoins(fieldId, info.joinedWith)
+    end
     local geo = TramlineGenerator.generate(set, info)
     self.geometry[fieldId] = geo
     -- an unfinished job only carries on if the tramlines stayed the same
@@ -251,6 +297,17 @@ function TramlineStore:save()
         i = i + 1
     end
 
+    -- fields joined into another field's layout
+    local jn = 0
+    for field, into in pairs(self.joins) do
+        if self.sets[into] ~= nil then
+            local key = string.format("tramlines.join(%d)", jn)
+            xmlFile:setInt(key .. "#field", field)
+            xmlFile:setInt(key .. "#into", into)
+            jn = jn + 1
+        end
+    end
+
     xmlFile:save()
     xmlFile:delete()
     self.isDirty = false
@@ -313,6 +370,17 @@ function TramlineStore:load()
                     boomBack = xmlFile:getFloat(jk .. "#boomBack"),
                 }
             end
+        end
+    end)
+
+    -- fields joined into another field's layout (same table as TramlineFieldUtil.joins)
+    for k in pairs(self.joins) do self.joins[k] = nil end
+    if TramlineFieldUtil ~= nil then TramlineFieldUtil.joins = self.joins end
+    xmlFile:iterate("tramlines.join", function(_, key)
+        local field, into = xmlFile:getInt(key .. "#field"), xmlFile:getInt(key .. "#into")
+        if field ~= nil and into ~= nil and field ~= into and self.sets[into] ~= nil then
+            self.joins[field] = into
+            self.sets[field] = nil
         end
     end)
     xmlFile:delete()

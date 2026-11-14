@@ -184,8 +184,8 @@ end
 
 function TramlineMenu:askDirection()
     local info = self.state.info
-    local header = string.format("Field %d  –  %.1f ha  (approx. %.0f × %.0f m)",
-        info.fieldId, info.areaHa, info.edgeLength, info.edgeWidth)
+    local header = string.format("%s  –  %.1f ha  (approx. %.0f × %.0f m)",
+        TramlineDialog.fieldName(info), info.areaHa, info.edgeLength, info.edgeWidth)
 
     local options = {
         "Along longest edge (auto)",
@@ -370,8 +370,8 @@ function TramlineMenu:finish()
     for _, w in ipairs(geo.warnings or {}) do warn = warn .. "\nNote: " .. w end
 
     local text = string.format(
-        "Field %d\nArea: %.1f ha\nTramlines: %d @ %.1f m\nHeadland passes: %d\nTotal tramline length: %.0f m\n%s\n%s%s%s\n\nPark on the headland tramline (orange) and press Alt+T to start the worker.",
-        st.info.fieldId, st.info.areaHa, #geo.lines, st.set.spacing, st.set.headlands, totalLen, turns, paintLine, saveLine, warn)
+        "%s\nArea: %.1f ha\nTramlines: %d @ %.1f m\nHeadland passes: %d\nTotal tramline length: %.0f m\n%s\n%s%s%s\n\nPark on the headland tramline (orange) and press Alt+T to start the worker.",
+        TramlineDialog.fieldName(st.info), st.info.areaHa, #geo.lines, st.set.spacing, st.set.headlands, totalLen, turns, paintLine, saveLine, warn)
 
     showInfo("Tramlines set", text)
     self.state = nil

@@ -52,6 +52,11 @@ FieldScanner.api = {
     mapPolygon = function(x, z) return TramlineFieldUtil.getFieldPolygon(TramlineFieldUtil.getFieldAt(x, z)) end,
     -- a hedge, wall, fence, tree or building standing at x,z?
     obstacleAt = function(x, z) return TramlineFieldUtil.hasObstacleAt(x, z) end,
+    -- joined fields: the farm owning the farmland at x,z, field ground at
+    -- x,z of any field, and the map's field id there (no joins)
+    ownerAt = function(x, z) return TramlineFieldUtil.getOwnerAt(x, z) end,
+    groundAt = function(x, z) return TramlineFieldUtil.isFieldPoint(x, z) end,
+    rawFieldIdAt = function(x, z) return TramlineFieldUtil.getRawFieldIdAt(x, z) end,
 }
 
 -------------------------------------------------------------------------------
@@ -60,7 +65,21 @@ function FieldScanner.scan(x, z)
     local api = FieldScanner.api
     local fieldId = api.fieldIdAt(x, z)
     if fieldId == nil then return nil end
-    local onField = function(px, pz) return api.onField(fieldId, px, pz) end
+    -- Joined fields: on a farm's own land, field ground carries on across
+    -- the farmland lines into the farm's other land - fields joined by
+    -- ploughing the land between them are one field, as the game's own
+    -- helpers see them. (Not on land the farm doesn't own: contract fields
+    -- stay as the map has them.)
+    local owner = (api.ownerAt ~= nil and api.groundAt ~= nil) and api.ownerAt(x, z) or nil
+    local onField
+    if owner ~= nil then
+        onField = function(px, pz)
+            if api.onField(fieldId, px, pz) then return true end
+            return api.groundAt(px, pz) and api.ownerAt(px, pz) == owner
+        end
+    else
+        onField = function(px, pz) return api.onField(fieldId, px, pz) end
+    end
 
     local poly, source = nil, nil
     local mapPoly = nil     -- the map's own outline: says what is one field even where its edges are off
@@ -71,10 +90,12 @@ function FieldScanner.scan(x, z)
         mp = G.makeCCW(G.dedupe(mp, 0.05, true))
         if G.pointInPolygon(mp, x, z) then
             mapPoly = mp
-            local ratio = FieldScanner.validatePolygon(mp, onField)
+            local ratio, onPast = FieldScanner.validatePolygon(mp, onField)
             TramlineLog.info("[TramlinePilot] field %d: map outline %d points, %.0f%% agrees with the ground", fieldId, #mp, ratio * 100)
-            if ratio >= FieldScanner.VALIDATE_MIN then
+            if ratio >= FieldScanner.VALIDATE_MIN and not (owner ~= nil and onPast >= 3) then
                 poly, source = mp, "map"
+            elseif ratio >= FieldScanner.VALIDATE_MIN then
+                TramlineLog.info("[TramlinePilot] field %d: the field carries on past the map's outline in %d places (joined?)", fieldId, onPast)
             end
         end
     end
@@ -106,9 +127,43 @@ function FieldScanner.scan(x, z)
 
     local info = FieldScanner.describe(poly)
     info.fieldId, info.source, info.refX, info.refZ = fieldId, source, x, z
-    TramlineLog.info("[TramlinePilot] field %d scanned (%s outline, %d points): %.2f ha, longest edge %.0f m",
-        fieldId, source, #poly, info.areaHa, info.edgeLength)
+    info.joinedWith = (owner ~= nil) and FieldScanner.fieldsInside(poly, fieldId, onField) or {}
+    TramlineLog.info("[TramlinePilot] field %d scanned (%s outline, %d points): %.2f ha, longest edge %.0f m%s",
+        fieldId, source, #poly, info.areaHa, info.edgeLength,
+        (#info.joinedWith > 0) and (", joined with field(s) " .. table.concat(info.joinedWith, ", ")) or "")
     return info
+end
+
+-- The map's other fields joined to this one: fields with at least 0.5 ha of
+-- their ground in the joined field (a sliver of a neighbour's farmland at the
+-- edge doesn't count), sorted; sampled on a grid of about 60 x 60 points.
+FieldScanner.JOIN_MIN_AREA = 5000
+function FieldScanner.fieldsInside(poly, fieldId, onField)
+    local api = FieldScanner.api
+    if api.rawFieldIdAt == nil then return {} end
+    local x0, z0, x1, z1 = G.bounds(poly)
+    local step = math.max(4, math.max(x1 - x0, z1 - z0) / 60)
+    local count = {}
+    local z = z0 + step * 0.5
+    while z < z1 do
+        for _, iv in ipairs(G.clipLine(poly, x0 - 1, z, 1, 0)) do
+            local x = x0 - 1 + iv[1] + step * 0.5
+            while x < x0 - 1 + iv[2] do
+                if onField(x, z) then
+                    local id = api.rawFieldIdAt(x, z)
+                    if id ~= nil and id ~= fieldId then count[id] = (count[id] or 0) + 1 end
+                end
+                x = x + step
+            end
+        end
+        z = z + step
+    end
+    local list = {}
+    for id, c in pairs(count) do
+        if c >= 5 and c * step * step >= FieldScanner.JOIN_MIN_AREA then list[#list + 1] = id end
+    end
+    table.sort(list)
+    return list
 end
 
 -- area, centre, bounds and longest edge of a CCW polygon
@@ -153,11 +208,12 @@ function FieldScanner.describe(poly)
     return info
 end
 
--- share of samples along the polygon edges where "just inside" is field and
--- "just outside" is not
+-- Share of samples along the outline with field just inside and not just
+-- outside; and how many samples have field on both sides (the field carries
+-- on past the outline).
 function FieldScanner.validatePolygon(poly, onField)
     local n = #poly
-    local good, total = 0, 0
+    local good, total, past = 0, 0, 0
     for i = 1, n do
         local a, b = poly[i], poly[(i % n) + 1]
         local dx, dz, l = G.normalize(b[1] - a[1], b[2] - a[2])
@@ -168,14 +224,18 @@ function FieldScanner.validatePolygon(poly, onField)
                 local t = (j - 0.5) / k * l
                 local px, pz = a[1] + dx * t, a[2] + dz * t
                 total = total + 1
-                if onField(px + nx * 0.75, pz + nz * 0.75) and not onField(px - nx * 1.25, pz - nz * 1.25) then
-                    good = good + 1
+                if onField(px + nx * 0.75, pz + nz * 0.75) then
+                    if not onField(px - nx * 1.25, pz - nz * 1.25) then
+                        good = good + 1
+                    elseif onField(px - nx * 4, pz - nz * 4) then
+                        past = past + 1
+                    end
                 end
             end
         end
     end
-    if total == 0 then return 0 end
-    return good / total
+    if total == 0 then return 0, 0 end
+    return good / total, past
 end
 
 -------------------------------------------------------------------------------

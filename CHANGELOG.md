@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.1.0.2 (14 November 2026)
+
+### New
+
+- **Joined fields:** fields you have joined by ploughing or cultivating the land between them now count as one field, the way the game's own workers see them.
+  - Open the setup menu on any part of it. The outline goes round the whole joined field, with one headland round all of it.
+  - The menu header shows which fields are joined, for example "Fields 9 + 18 (joined)".
+  - The tramlines, the worker, the lines in the field and Precision Farming all treat it as one field.
+  - This works on land your farm owns. Contract fields are planned as the map has them.
+  - To plan them separately again, sell one of them or put grass back between them, then generate the layout again.
+
+### Fixes
+
+- The headland no longer crosses itself in an X or splits into two loops on fields with stepped edges. Some maps (maps made with maps4fs, for example) paint field ground in 2 m squares, so every slanting edge is a staircase. Field 9 on Needham Hall Farm was one of these. The headland is now always one ring, a steady distance in from the edge.
+- On those fields the worker could ask you to turn round when you were already facing the right way. That came from the crossed headland and is fixed with it.
+
 ## 1.1.0.1 (12 November 2026)
 
 ### Fixes

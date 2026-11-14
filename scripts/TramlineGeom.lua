@@ -482,14 +482,15 @@ end
 -------------------------------------------------------------------------------
 -- Inward offset of a CCW polygon by distance d.
 --
--- 1. raw offset curve: each edge moved inwards by d; convex corners meet at
---    the mitre point, reflex corners are joined by an arc of radius d around
---    the original vertex
--- 2. the raw curve is sampled densely and every sample that is closer than d
---    to the boundary is thrown away (those are the parts that cross over
---    where the field is narrower than 2d, or where short edges get "eaten")
--- 3. the remaining runs are stitched back together at the crossing points
---    into one or more closed loops
+-- 1. raw offset curve: each edge moved inwards by d over its whole length;
+--    at convex corners a straight bridge joins the moved edges, at reflex
+--    corners an arc of radius d around the original vertex
+-- 2. the raw curve is split where it crosses itself; the pieces exactly d
+--    from the outline are kept (the rest cross over where the field is
+--    narrower than 2d, or come from short edges that get "eaten", or are
+--    the bridges, which always lie inside)
+-- 3. the kept pieces are joined at their crossing points into one or more
+--    closed loops
 -- Returns a list of CCW loops (largest first).
 -------------------------------------------------------------------------------
 
@@ -500,145 +501,317 @@ local function offsetCore(poly, d, step, sign)
     local n = #poly
     if n < 3 or d <= 0 then return { poly } end
 
-    -- 1. raw curve
-    local raw = {}
+    -- 1. raw curve: every edge moved in by d over its whole length; where
+    --    the moved edges meet (the corner turns inwards) a straight bridge
+    --    joins them, where they part an arc of radius d round the corner.
+    --    (Running each edge only to the mitre point would turn the moved
+    --    edge round where an edge is short - a step of a stepped edge - and
+    --    lose part of the true curve.)
+    --    Each raw segment is marked: a moved edge, a chord of an arc (with
+    --    the corner it goes round) or a bridge.
+    local EDGE, ARC, BRIDGE = 1, 2, 3
+    local raw, kind, centre = {}, {}, {}
+    local function add(x, z, k, c)
+        local q = raw[#raw]
+        if q ~= nil and (x - q[1]) ^ 2 + (z - q[2]) ^ 2 <= 1e-8 then
+            -- the same point: the segment from it is the new one
+            kind[#raw], centre[#raw] = k, c
+            return
+        end
+        raw[#raw + 1] = { x, z }
+        kind[#raw], centre[#raw] = k, c
+    end
     for i = 1, n do
         local p0, p1, p2 = poly[((i - 2) % n) + 1], poly[i], poly[(i % n) + 1]
         local ux, uz = G.normalize(p1[1] - p0[1], p1[2] - p0[2])
         local vx, vz = G.normalize(p2[1] - p1[1], p2[2] - p1[2])
         local n1x, n1z = -uz * sign, ux * sign     -- offset normals (left = inward)
         local n2x, n2z = -vz * sign, vx * sign
-        local cross = (ux * vz - uz * vx) * sign   -- > 0: the offset edges meet (mitre)
+        local cross = (ux * vz - uz * vx) * sign   -- > 0: the moved edges meet
         local dot = ux * vx + uz * vz
         if cross > 1e-9 or (cross >= -1e-9 and dot > 0) then
-            local den = 1 + (n1x * n2x + n1z * n2z)
-            if den > 0.08 then
-                raw[#raw + 1] = { p1[1] + d * (n1x + n2x) / den, p1[2] + d * (n1z + n2z) / den }
-            else
-                -- extremely sharp spike: bevel, the trimming sorts it out
-                raw[#raw + 1] = { p1[1] + d * n1x, p1[2] + d * n1z }
-                raw[#raw + 1] = { p1[1] + d * n2x, p1[2] + d * n2z }
-            end
+            add(p1[1] + d * n1x, p1[2] + d * n1z, BRIDGE)
         else
-            -- the offset edges part: arc of radius d around p1 from n1 to n2
+            add(p1[1] + d * n1x, p1[2] + d * n1z, ARC, p1)
             local a0, a1 = atan2(n1z, n1x), atan2(n2z, n2x)
             local sweep = G.wrapPi(a1 - a0)
             if sign > 0 and sweep > 0 then sweep = sweep - TWO_PI end
             if sign < 0 and sweep < 0 then sweep = sweep + TWO_PI end
             local k = max(1, ceil(abs(sweep) * d / step))
-            for j = 0, k do
-                local a = a0 + sweep * j / k
-                raw[#raw + 1] = { p1[1] + d * cos(a), p1[2] + d * sin(a) }
+            for j = 1, k - 1 do
+                local ang = a0 + sweep * j / k
+                add(p1[1] + d * cos(ang), p1[2] + d * sin(ang), ARC, p1)
             end
+        end
+        add(p1[1] + d * n2x, p1[2] + d * n2z, EDGE)
+    end
+    if #raw > 1 then
+        local a, b = raw[1], raw[#raw]
+        if (a[1] - b[1]) ^ 2 + (a[2] - b[2]) ^ 2 <= 1e-8 then
+            raw[#raw], kind[#raw], centre[#raw] = nil, nil, nil
         end
     end
 
-    -- 2. sample and classify
-    local dense = G.densify(raw, step, true)
-    local m = #dense
+    -- 2. split the raw curve where it crosses itself. Every point of the true
+    --    offset curve is exactly d from the outline, and along the raw curve
+    --    that only changes where it crosses another part of itself, so each
+    --    piece between two crossings is either all on the true curve or not
+    --    at all (one test decides). The pieces kept are then joined at their
+    --    crossings - no guessing which piece comes next.
+    local m = #raw
+    if m < 3 then return {} end
     local idx = G.buildEdgeIndex(poly, max(d, 4))
-    local tol = 0.02 + d * 0.002
-    local tolFar = 0.05 + d * 0.004
-    local valid, nValid = {}, 0
-    for i = 1, m do
-        local p = dense[i]
-        local dd = G.nearestEdgeDist(idx, p[1], p[2], d)
-        -- every point of the true offset curve is exactly d from the outline:
-        -- closer is where the field is narrower than 2d, further is an offset
-        -- line carried on past the end of a short edge (a small hook or notch
-        -- in the outline throws a spike like that into the field)
-        valid[i] = dd >= d - tol and dd <= d + tolFar
-        if valid[i] then nValid = nValid + 1 end
+    -- The test is made at a point exactly d from the edge or corner the piece
+    -- comes from (on a moved edge, or on the true arc rather than its chord),
+    -- so it can be exact: on a stepped outline the arcs round neighbouring
+    -- steps nearly coincide, and at a corner that bends only a little the
+    -- bridge is only millimetres inside.
+    local function onCurve(x, z)
+        local dd = G.nearestEdgeDist(idx, x, z, d)
+        return dd >= d - 1e-6 and dd <= d + 0.01
     end
-    if nValid == 0 then return {} end
-    if nValid == m then
-        local loop = G.dedupe(dense, 0.05, true)
-        return { G.makeCCW(loop) }
+    -- the test point of the part t0..t1 of raw segment s
+    local function testPoint(s, t0, t1)
+        local a, b = raw[s], raw[(s % m) + 1]
+        local tm = (t0 + t1) * 0.5
+        local x, z = a[1] + (b[1] - a[1]) * tm, a[2] + (b[2] - a[2]) * tm
+        if kind[s] == ARC then
+            local c = centre[s]
+            local rx, rz = x - c[1], z - c[2]
+            local rl = sqrt(rx * rx + rz * rz)
+            if rl > 1e-9 then x, z = c[1] + rx / rl * d, c[2] + rz / rl * d end
+        end
+        return x, z
     end
 
-    -- 3. runs of valid samples
-    local runs = {}
-    local startI = nil
-    for i = 1, m do
-        if not valid[i] and valid[(i % m) + 1] then startI = (i % m) + 1; break end
-    end
-    if startI == nil then return {} end
-    local i, cnt = startI, 0
-    while cnt < m do
-        if valid[i] then
-            local run = {}
-            local first = i
-            while valid[i] and cnt < m do
-                run[#run + 1] = { dense[i][1], dense[i][2] }
-                i = (i % m) + 1; cnt = cnt + 1
+    -- segments in a grid (each one in every cell it passes through)
+    local cell = max(2, step * 4)
+    local grid = {}
+    for s = 1, m do
+        local a, b = raw[s], raw[(s % m) + 1]
+        local dx, dz = b[1] - a[1], b[2] - a[2]
+        local k = max(1, ceil(sqrt(dx * dx + dz * dz) / cell))
+        for j = 0, k - 1 do
+            local x0, z0 = a[1] + dx * j / k, a[2] + dz * j / k
+            local x1, z1 = a[1] + dx * (j + 1) / k, a[2] + dz * (j + 1) / k
+            -- a hair of margin, so a crossing on a cell border is in a cell
+            -- that has both segments
+            local e = 1e-6 * cell
+            for ix = floor((min(x0, x1) - e) / cell), floor((max(x0, x1) + e) / cell) do
+                local col = grid[ix]
+                if col == nil then col = {}; grid[ix] = col end
+                for iz = floor((min(z0, z1) - e) / cell), floor((max(z0, z1) + e) / cell) do
+                    local list = col[iz]
+                    if list == nil then list = {}; col[iz] = list end
+                    if list[#list] ~= s then list[#list + 1] = s end
+                end
             end
-            -- segment leaving the run and segment entering it (for stitching)
-            local prevI = ((first - 2) % m) + 1
-            run.inA, run.inB = dense[prevI], dense[first]
-            local lastI = ((i - 2) % m) + 1
-            run.outA, run.outB = dense[lastI], dense[i]
-            runs[#runs + 1] = run
-        else
-            i = (i % m) + 1; cnt = cnt + 1
         end
     end
 
-    local function segIntersect(a, b, c, e)
-        local rx, rz = b[1] - a[1], b[2] - a[2]
-        local sx, sz = e[1] - c[1], e[2] - c[2]
-        local den = rx * sz - rz * sx
-        if abs(den) < 1e-12 then return nil end
-        local t = ((c[1] - a[1]) * sz - (c[2] - a[2]) * sx) / den
-        local u = ((c[1] - a[1]) * rz - (c[2] - a[2]) * rx) / den
-        if t < -0.5 or t > 1.5 or u < -0.5 or u > 1.5 then return nil end
-        return { a[1] + rx * t, a[2] + rz * t }
+    -- crossings (each found once: in the cell it lies in); crossings within
+    -- 1 cm of each other are one junction
+    local splits = {}
+    local jx, jz, nj = {}, {}, 0
+    local jgrid = {}
+    local function junction(x, z)
+        local gx, gz = floor(x * 100 + 0.5), floor(z * 100 + 0.5)
+        for ox = -1, 1 do
+            local col = jgrid[gx + ox]
+            if col ~= nil then
+                for oz = -1, 1 do
+                    local id = col[gz + oz]
+                    if id ~= nil and abs(jx[id] - x) < 0.01 and abs(jz[id] - z) < 0.01 then return id end
+                end
+            end
+        end
+        nj = nj + 1
+        jx[nj], jz[nj] = x, z
+        local col = jgrid[gx]
+        if col == nil then col = {}; jgrid[gx] = col end
+        col[gz] = nj
+        return nj
+    end
+    -- (a piece ends at the crossing itself, not at the junction it was
+    -- merged into: a junction can stand for two crossings up to 1 cm apart,
+    -- and a piece moved by that much can fail the test of step 3)
+    local function addSplit(s, t, id, x, z)
+        local l = splits[s]
+        if l == nil then l = {}; splits[s] = l end
+        l[#l + 1] = { t, id, x, z }
+    end
+    for ix, col in pairs(grid) do
+        for iz, list in pairs(col) do
+            local L = #list
+            for p = 1, L - 1 do
+                for q = p + 1, L do
+                    -- always the lower segment first: the same pair gives the
+                    -- same crossing point in every cell it is tested in
+                    local s1, s2 = list[p], list[q]
+                    if s1 > s2 then s1, s2 = s2, s1 end
+                    if s2 - s1 > 1 and not (s1 == 1 and s2 == m) then
+                        local a, b = raw[s1], raw[(s1 % m) + 1]
+                        local c, e = raw[s2], raw[(s2 % m) + 1]
+                        local rx, rz = b[1] - a[1], b[2] - a[2]
+                        local sx, sz = e[1] - c[1], e[2] - c[2]
+                        local den = rx * sz - rz * sx
+                        if abs(den) > 1e-12 then
+                            local t = ((c[1] - a[1]) * sz - (c[2] - a[2]) * sx) / den
+                            local u = ((c[1] - a[1]) * rz - (c[2] - a[2]) * rx) / den
+                            if t >= 0 and t < 1 and u >= 0 and u < 1 then
+                                local x, z = a[1] + rx * t, a[2] + rz * t
+                                if floor(x / cell) == ix and floor(z / cell) == iz then
+                                    local id = junction(x, z)
+                                    addSplit(s1, t, id, x, z)
+                                    addSplit(s2, u, id, x, z)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
     end
 
-    -- stitch: the end of a run continues at the start of the run whose
-    -- entering segment crosses our leaving segment (nearest one)
+    -- no crossings: the raw curve is the offset curve, or there is none
+    if nj == 0 then
+        local best, bestL = 1, -1
+        for s = 1, m do
+            local a, b = raw[s], raw[(s % m) + 1]
+            local l = (b[1] - a[1]) ^ 2 + (b[2] - a[2]) ^ 2
+            if l > bestL then best, bestL = s, l end
+        end
+        if kind[best] ~= BRIDGE and onCurve(testPoint(best, 0, 1)) then
+            local loop = G.dedupe(raw, 0.05, true)
+            if #loop >= 3 and G.signedArea(loop) > max(20, d * d * 0.5) then return { G.makeCCW(loop) } end
+        end
+        return {}
+    end
+
+    -- 3. pieces between crossings, in order along the curve (each event:
+    --    x, z, junction or nil for the end of a segment, segment, t)
+    local events = {}
+    for s = 1, m do
+        local l = splits[s]
+        if l ~= nil then
+            table.sort(l, function(p, q) return p[1] < q[1] end)
+            for _, sp in ipairs(l) do events[#events + 1] = { sp[3], sp[4], sp[2], s, sp[1] } end
+        end
+        local e = raw[(s % m) + 1]
+        events[#events + 1] = { e[1], e[2], nil, s, 1 }
+    end
+    local ne = #events
+    local first = nil
+    for i = 1, ne do if events[i][3] ~= nil then first = i; break end end
+    local valid = {}
+    local i, cnt = first, 0
+    while cnt < ne do
+        local j0 = events[i][3]
+        local pts = { { events[i][1], events[i][2] } }
+        local len = 0
+        -- the longest part of a raw segment in the piece, and any bridge
+        local bridge, bestL, bs, bt0, bt1 = false, -1, nil, 0, 0
+        repeat
+            local prev = events[i]
+            i = (i % ne) + 1; cnt = cnt + 1
+            local ev = events[i]
+            local last = pts[#pts]
+            local l = sqrt((ev[1] - last[1]) ^ 2 + (ev[2] - last[2]) ^ 2)
+            if l > 1e-9 then pts[#pts + 1] = { ev[1], ev[2] }; len = len + l end
+            -- this part runs on the segment after a segment end, else on the
+            -- segment of the crossing it starts at
+            local s, t0 = prev[4], prev[5]
+            if prev[3] == nil then s, t0 = (prev[4] % m) + 1, 0 end
+            local pl = sqrt((ev[1] - prev[1]) ^ 2 + (ev[2] - prev[2]) ^ 2)
+            if pl > 1e-9 then
+                if kind[s] == BRIDGE then bridge = true end
+                if pl > bestL then bestL, bs, bt0, bt1 = pl, s, t0, ev[5] end
+            end
+        until events[i][3] ~= nil or cnt >= ne
+        local j1 = events[i][3]
+        if len > 1e-6 and #pts >= 2 and not bridge and bs ~= nil and onCurve(testPoint(bs, bt0, bt1)) then
+            valid[#valid + 1] = { j0 = j0, j1 = j1, pts = pts }
+        end
+    end
+
+    -- 4. join the pieces kept at their crossings into loops (where two
+    --    loops touch at a crossing, the sharpest left turn keeps each loop
+    --    on its own side)
+    local startsAt = {}
+    for vi, pc in ipairs(valid) do
+        local l = startsAt[pc.j0]
+        if l == nil then l = {}; startsAt[pc.j0] = l end
+        l[#l + 1] = vi
+    end
+    -- pieces starting at a junction or at one within 5 cm of it (two arcs
+    -- that nearly coincide cross twice a few cm apart)
+    local function startsNear(j)
+        local list = startsAt[j]
+        local gx, gz = floor(jx[j] * 100 + 0.5), floor(jz[j] * 100 + 0.5)
+        local more = nil
+        for ox = -5, 5 do
+            local col = jgrid[gx + ox]
+            if col ~= nil then
+                for oz = -5, 5 do
+                    local k = col[gz + oz]
+                    if k ~= nil and k ~= j and startsAt[k] ~= nil
+                        and abs(jx[k] - jx[j]) < 0.05 and abs(jz[k] - jz[j]) < 0.05 then
+                        more = more or {}
+                        for _, q in ipairs(startsAt[k]) do more[#more + 1] = q end
+                    end
+                end
+            end
+        end
+        if more == nil then return list end
+        if list ~= nil then for _, q in ipairs(list) do more[#more + 1] = q end end
+        return more
+    end
     local used = {}
     local loops = {}
-    for r = 1, #runs do
-        if not used[r] then
+    for vi = 1, #valid do
+        if not used[vi] then
             local loop = {}
-            local cur = r
-            local guard = 0
-            while cur ~= nil and not used[cur] and guard <= #runs do
+            local c, closed, guard = vi, false, 0
+            local j0 = valid[vi].j0
+            while c ~= nil and guard <= #valid do
                 guard = guard + 1
-                used[cur] = true
-                local run = runs[cur]
-                for _, p in ipairs(run) do loop[#loop + 1] = p end
-                local last = run[#run]
-                local bestR, bestD = nil, 6 * step + 1
-                for q = 1, #runs do
-                    if q == r or not used[q] then
-                        local f = runs[q][1]
-                        local dd = sqrt((f[1] - last[1]) ^ 2 + (f[2] - last[2]) ^ 2)
-                        if dd < bestD then bestR, bestD = q, dd end
+                used[c] = true
+                local pc = valid[c]
+                for q = 1, #pc.pts - 1 do loop[#loop + 1] = pc.pts[q] end
+                -- back where it started: done
+                if pc.j1 == j0 or (abs(jx[pc.j1] - jx[j0]) < 0.05 and abs(jz[pc.j1] - jz[j0]) < 0.05) then
+                    closed = true
+                    break
+                end
+                local nextList = startsAt[pc.j1]
+                local any = false
+                if nextList ~= nil then
+                    for _, q in ipairs(nextList) do if not used[q] then any = true; break end end
+                end
+                if not any then nextList = startsNear(pc.j1) end
+                local best, bestAng = nil, -1e9
+                if nextList ~= nil then
+                    local a, b = pc.pts[#pc.pts - 1], pc.pts[#pc.pts]
+                    local ix, iz = G.normalize(b[1] - a[1], b[2] - a[2])
+                    for _, q in ipairs(nextList) do
+                        if not used[q] then
+                            local pq = valid[q]
+                            local ox, oz = G.normalize(pq.pts[2][1] - pq.pts[1][1], pq.pts[2][2] - pq.pts[1][2])
+                            local ang = atan2(ix * oz - iz * ox, ix * ox + iz * oz)
+                            if ang > bestAng then best, bestAng = q, ang end
+                        end
                     end
                 end
-                if bestR == nil then
-                    -- nothing starts close by: a small hook or notch in the outline
-                    -- left a wider gap (e.g. 6 m at d = 18). Carry on with the next
-                    -- run along the curve rather than closing the loop with a long
-                    -- straight line across the field.
-                    local q = (cur % #runs) + 1
-                    if q == r or not used[q] then
-                        local f = runs[q][1]
-                        local dd = sqrt((f[1] - last[1]) ^ 2 + (f[2] - last[2]) ^ 2)
-                        if dd <= max(4, 1.5 * d) then bestR = q end
-                    end
-                end
-                if bestR ~= nil then
-                    local x = segIntersect(run.outA, run.outB, runs[bestR].inA, runs[bestR].inB)
-                    if x ~= nil then loop[#loop + 1] = x end
-                end
-                if bestR == r then break end
-                cur = bestR
+                c = best
             end
-            loop = G.dedupe(loop, 0.05, true)
-            if #loop >= 3 and G.signedArea(loop) > 0 then
-                loops[#loops + 1] = loop
+            if not closed and #loop >= 3 then
+                -- a chain that stops short of its start (rounding): close it if the gap is tiny
+                local p, q = loop[#loop], loop[1]
+                closed = sqrt((p[1] - q[1]) ^ 2 + (p[2] - q[2]) ^ 2) < 1.0
+            end
+            if closed then
+                loop = G.dedupe(loop, 0.05, true)
+                if #loop >= 3 and G.signedArea(loop) > 0 then loops[#loops + 1] = loop end
             end
         end
     end

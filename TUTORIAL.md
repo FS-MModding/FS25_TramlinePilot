@@ -31,6 +31,8 @@
 - **Precision Farming tramlines:** on, off on tramline fields, or off everywhere.
 - **Buttons:** Enter generates, Space opens Saved wheelings, Clear field deletes the layout, Esc goes back.
 
+**Joined fields:** if you have joined two or more of your fields by ploughing or cultivating the land between them, Tramline Pilot plans them as one field. Open the menu on any part of it; the header shows the fields, for example "Fields 9 + 18 (joined)". To plan them separately again, sell one of them or put grass back between them, then generate again.
+
 ## Seeing your tramlines
 
 - Press Alt+4 to show or hide the lines.
@@ -109,6 +111,7 @@
 - **No lines:** press Alt+4.
 - **It can't follow the corners:** set Turn radius to your machine's turning circle.
 - **Gaps in the wheel tracks:** press Generate again with Create tramlines in crop set to Wheel tracks.
+- **Joined fields are planned separately:** the fields must be on land your farm owns, and the land between them must be field ground all the way across (ploughed or cultivated, not grass). Contract fields are planned as the map has them. Generate the layout again after joining them.
 - **The headland goes round a line across the field:** on maps where two fields were joined by taking out a hedge or wall, the ground where it stood isn't field. Tramline Pilot plans straight over a strip like that (up to about 8 m wide) when nothing stands in it, but keeps going round it if a hedge, wall, fence or trees are still there.
 
 ## Reporting a bug
