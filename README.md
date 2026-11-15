@@ -20,6 +20,7 @@ The step-by-step guide is in **[TUTORIAL.md](TUTORIAL.md)**.
   - Joined fields: fields of yours joined by ploughing the land between them are planned as one field, with one headland round the lot.
   - Direction: along the longest edge, your vehicle heading, A-B points (Alt+1 / Alt+2), any angle, or as stored.
   - Spacing 6-60 m (your boom or spreading width) and 0-4 headland passes.
+  - Or no headland tramline and a soil strip at the ends, for crops grown to the end of the field (potatoes, onions). The worker folds its boom, turns round on the soil (with a three-point turn where it is tight) and unfolds for the next tramline.
   - Turn radius, worker turns, headland corners, when to do the headland, work and turn speed.
   - Headland direction: clockwise or anticlockwise sends the worker round the headland that way, with one curve off the headland into the tramlines and one back onto it (not two each) and one corner tramline per corner. The tramlines are still done up and down.
 - **Create tramlines in the crop:** cut the wheel tracks (1.50-4.00 m apart, to match your sprayer) or a full lane straight away. The width of the machine you sit in is marked in the list.

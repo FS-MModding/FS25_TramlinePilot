@@ -70,9 +70,24 @@ local function buildSpacings()
     return t
 end
 
+-- headland: 0-4 passes, or no headland tramline and a soil strip at the
+-- ends (crops grown to the end of the field: the worker folds and turns on it)
 local function buildHeadlands()
-    return { "0", "1", "2", "3", "4" }
+    local t = { "0 passes", "1 pass", "2 passes", "3 passes", "4 passes" }
+    for _, w in ipairs(TramlineGenerator.STRIP_WIDTHS) do t[#t + 1] = string.format("Soil strip %d m", w) end
+    return t
 end
+local function headlandIndex(set)
+    if (set.strip or 0) > 0 then
+        local best, bi = math.huge, 6
+        for i, w in ipairs(TramlineGenerator.STRIP_WIDTHS) do
+            if math.abs(w - set.strip) < best then best, bi = math.abs(w - set.strip), 5 + i end
+        end
+        return bi
+    end
+    return math.max(1, math.min(5, (set.headlands or 1) + 1))
+end
+TramlineDialog.headlandIndex = headlandIndex
 
 local function buildSpeeds(lo, hi)
     local t = {}
@@ -170,7 +185,7 @@ function TramlineDialog:syncRows()
     self.directionOption:setState(st.direction or 1)
     self:syncAngleRow()
     self.spacingOption:setState(math.max(1, math.min(55, math.floor((set.spacing or 24) + 0.5) - 5)))
-    self.headlandOption:setState(math.max(1, math.min(5, (set.headlands or 1) + 1)))
+    self.headlandOption:setState(headlandIndex(set))
     self.turnOption:setState(set.turnStyle or 1)
     self.radiusOption:setState(math.max(1, math.min(TramlineDialog.RADIUS_MAX - TramlineDialog.RADIUS_MIN + 1,
         math.floor((set.turnRadius or 7) + 0.5) - TramlineDialog.RADIUS_MIN + 1)))
@@ -178,14 +193,25 @@ function TramlineDialog:syncRows()
     for i, k in ipairs(TramlineDialog.ORDER_KEYS) do if k == set.headlandOrder then oi = i end end
     self.orderOption:setState(oi)
     self.cornerOption:setState(set.corners == "reverse" and 2 or 1)
-    self.cornerOption:setDisabled((set.headlands or 0) < 1)
     local di = 1
     for i, k in ipairs(TramlineDialog.HEADLAND_DIR_KEYS) do if k == set.headlandDir then di = i end end
     self.headlandDirOption:setState(di)
-    self.headlandDirOption:setDisabled((set.headlands or 0) < 1)
     self.refillOption:setState(set.refillAD and 2 or 1)
+    self:syncHeadlandRows()
     self.trackOption:setState(trackIndex(set.trackWidth))
     self:updatePreview()
+end
+
+-- rows that only mean something with a headland tramline
+function TramlineDialog:syncHeadlandRows()
+    local set = self.state.set
+    local strip = (set.strip or 0) > 0
+    local noRing = strip or (set.headlands or 0) < 1
+    self.cornerOption:setDisabled(noRing)
+    self.headlandDirOption:setDisabled(noRing)
+    self.orderOption:setDisabled(noRing)
+    self.turnOption:setDisabled(strip)
+    self.refillOption:setDisabled(strip or TramlineAD.get() == nil)
 end
 
 function TramlineDialog:onClose()
@@ -210,9 +236,36 @@ function TramlineDialog:updatePreview()
         TramlineLog.warning("[TramlinePilot] preview failed: %s", tostring(geo))
     end
     local n = (self.previewGeo and #self.previewGeo.lines) or 0
-    self.previewText:setText(string.format("%d tramlines @ %d m, %d headland pass(es), turn radius %d m, direction %d°%s",
-        n, tmp.spacing or 0, tmp.headlands or 0, tmp.turnRadius or 0, math.floor(self:currentAngle() + 0.5),
+    local head = string.format("%d headland pass(es)", tmp.headlands or 0)
+    if (tmp.strip or 0) > 0 then head = string.format("soil strip %d m at the ends", tmp.strip) end
+    self.previewText:setText(string.format("%d tramlines @ %d m, %s, turn radius %d m, direction %d°%s",
+        n, tmp.spacing or 0, head, tmp.turnRadius or 0, math.floor(self:currentAngle() + 0.5),
         st.hadExisting and "\nGenerate overwrites the stored set" or ""))
+end
+
+-- The cropped part of each row of the field's spans (soil strip layouts:
+-- everything but the strip at the ends)
+function TramlineDialog.cropSpans(outer, geo)
+    local ctx = geo.strip
+    local out = {}
+    for _, row in ipairs(outer) do
+        local xs = {}
+        for i = 1, #row.xs - 1, 2 do
+            local x1, x2 = row.xs[i], row.xs[i + 1]
+            local step = math.max(1, (x2 - x1) / 160)
+            local inCrop, from = false, nil
+            local x = x1
+            while x < x2 do
+                local c = TramlineGenerator.distEnd(ctx, x, row.z) >= ctx.W
+                if c and not inCrop then from, inCrop = x, true
+                elseif not c and inCrop then xs[#xs + 1] = from; xs[#xs + 1] = x; inCrop = false end
+                x = x + step
+            end
+            if inCrop then xs[#xs + 1] = from; xs[#xs + 1] = x2 end
+        end
+        out[#out + 1] = { z = row.z, xs = xs }
+    end
+    return out
 end
 
 -- Horizontal spans { z, {x1, x2, x3, x4, ...} } filling the polygons 'loops'
@@ -289,6 +342,8 @@ function TramlineDialog:draw(...)
         local H = geo and geo.headlands or 0
         if geo ~= nil and H > 0 and geo.rings ~= nil and geo.rings[H] ~= nil then
             inner = fillSpans(geo.rings[H], b[2], b[4], rows)
+        elseif geo ~= nil and geo.strip ~= nil then
+            inner = TramlineDialog.cropSpans(outer, geo)
         end
         fc = { geo = geo, info = info, outer = outer, inner = inner, dz = dz }
         self.fillCache = fc
@@ -421,9 +476,19 @@ function TramlineDialog:onClickAngle(state)
 end
 function TramlineDialog:onClickSpacing(state)   self.state.set.spacing = state + 5; self:updatePreview() end
 function TramlineDialog:onClickHeadland(state)
+    if state > 5 then
+        -- soil strip: no headland tramline
+        self.state.set.strip = TramlineGenerator.STRIP_WIDTHS[state - 5] or 12
+        self.state.set.headlands = 0
+        self.state.set.refillAD = false     -- (the way to the field gate needs a headland tramline)
+        self.refillOption:setState(1)
+        self:syncHeadlandRows()
+        self:updatePreview()
+        return
+    end
+    self.state.set.strip = 0
     self.state.set.headlands = state - 1
-    self.cornerOption:setDisabled(state - 1 < 1)
-    self.headlandDirOption:setDisabled(state - 1 < 1)
+    self:syncHeadlandRows()
     self:updatePreview()
 end
 function TramlineDialog:onClickCorners(state)  self.state.set.corners = (state == 2) and "reverse" or "round" end

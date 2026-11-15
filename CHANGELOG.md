@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.2.0.0 (15 November 2026)
+
+### New
+
+- **Soil strip at the ends, for crops grown to the end of the field (potatoes, onions):** a new Headland choice, Soil strip 6-30 m, for fields with no headland tramline.
+  - The tramlines stop at a strip of bare soil that wide at the ends of the field. Along the sides the crop goes right to the edge.
+  - At the end of each tramline the worker drives on until the boom has left the crop, folds it, turns round on the strip, then unfolds lined up with the next tramline and sprays back up it.
+  - Where the strip is too narrow to turn round in one go, it does a three-point turn (forwards, back, forwards). Self-propelled sprayers and mounted sprayers can back up; trailed sprayers turn forwards only, so they need a wider strip.
+  - The turns are worked out for the machine you sit in when you press Generate: its length, where its boom is, and whether it can back up. When the worker starts, they are worked out again for the machine it drives.
+  - With Create tramlines in crop on, the crop on the strip is cleared too, so the worker turns on bare soil.
+  - The menu tells you if any turns don't fit. Make the strip wider or the turn radius smaller.
+  - The menu row is now called Headland: 0-4 passes, or a soil strip.
+  - A soil strip field starts at the start of its first tramline (the green flag). Refill with AutoDrive needs a headland tramline, so it is off on these fields.
+
+### Changes
+
+- On a field without a headland tramline, a worker started while it stands in the first tramline, facing along it, now sets off from there instead of driving round to come in at its end.
+
 ## 1.1.0.2 (14 November 2026)
 
 ### New

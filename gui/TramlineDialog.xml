@@ -27,7 +27,7 @@
                         <MultiTextOption profile="tl_rowOption" id="spacingOption" onClick="onClickSpacing" />
                     </Bitmap>
                     <Bitmap profile="tl_row">
-                        <Text profile="tl_rowText" text="Headland passes" />
+                        <Text profile="tl_rowText" text="Headland" />
                         <MultiTextOption profile="tl_rowOption" id="headlandOption" onClick="onClickHeadland" />
                     </Bitmap>
                     <Bitmap profile="tl_row">

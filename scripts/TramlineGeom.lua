@@ -142,12 +142,15 @@ end
 -- edge" and "anything closer than r?" are fast on fields with many vertices.
 -------------------------------------------------------------------------------
 
-function G.buildEdgeIndex(poly, cell)
-    local idx = { poly = poly, cell = cell, buckets = {} }
+-- (keep: optional function(i) -> only edges i (poly[i] to the next point)
+-- it says yes to are indexed)
+function G.buildEdgeIndex(poly, cell, keep)
+    local idx = { poly = poly, cell = cell, buckets = {}, mark = {}, stamp = 0 }
     local n = #poly
     local function key(ix, iz) return ix * 1000003 + iz end
     idx.key = key
     for i = 1, n do
+      if keep == nil or keep(i) then
         local a, b = poly[i], poly[(i % n) + 1]
         local x0, x1 = min(a[1], b[1]), max(a[1], b[1])
         local z0, z1 = min(a[2], b[2]), max(a[2], b[2])
@@ -159,6 +162,7 @@ function G.buildEdgeIndex(poly, cell)
                 bkt[#bkt + 1] = i
             end
         end
+      end
     end
     return idx
 end
@@ -170,14 +174,18 @@ function G.nearestEdgeDist(idx, x, z, radius)
     local r = ceil(radius / cell)
     local cx, cz = floor(x / cell), floor(z / cell)
     local best = math.huge
-    local seen = {}
+    -- each edge once (an edge can be in several cells): marked with this call's stamp
+    local mark = idx.mark
+    if mark == nil then mark = {}; idx.mark = mark; idx.stamp = 0 end
+    local stamp = (idx.stamp or 0) + 1
+    idx.stamp = stamp
     for ix = cx - r, cx + r do
         for iz = cz - r, cz + r do
             local bkt = idx.buckets[idx.key(ix, iz)]
             if bkt ~= nil then
                 for _, i in ipairs(bkt) do
-                    if not seen[i] then
-                        seen[i] = true
+                    if mark[i] ~= stamp then
+                        mark[i] = stamp
                         local a, b = poly[i], poly[(i % n) + 1]
                         local d = G.distPointSeg(x, z, a[1], a[2], b[1], b[2])
                         if d < best then best = d end

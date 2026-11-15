@@ -7,7 +7,7 @@
 
 1. Stand on the field and press Right Ctrl+M.
 2. Set Tramline spacing to your boom or spreading width.
-3. Pick a Direction and the number of Headland passes.
+3. Pick a Direction and the Headland: the number of headland passes, or a soil strip (see below).
 4. Press Enter to generate the tramlines.
 5. Fill your sprayer or spreader and drive onto the amber headland tramline.
 6. When the green Start here flag shows, press Alt+T.
@@ -17,7 +17,7 @@
 
 - **Direction:** longest edge, vehicle heading, A-B points (Alt+1, Alt+2), an angle, or as stored.
 - **Tramline spacing:** your boom or spreading width (6-60 m).
-- **Headland passes:** 0-4 tramlines round the field edge.
+- **Headland:** 0-4 passes (tramlines round the field edge), or a soil strip 6-30 m wide at the ends with no headland tramline (see "Crops grown to the end of the field").
 - **Headland direction:** as the vehicle faces, or clockwise / anticlockwise. Clockwise or anticlockwise sends the worker round the headland that way. Where it turns off the headland into the tramlines, and back onto the headland when they are done, there is one curve each (going that way round) instead of two. The tramlines are still done up and down, turning one way at one end and the other way at the other end. With Back into corners, each corner gets one corner tramline (from the side the worker comes round to) instead of two.
 - **Worker turns:** along the headland tramline, or loops where they fit.
 - **Turn radius:** your machine's turning circle (4-15 m).
@@ -32,6 +32,19 @@
 - **Buttons:** Enter generates, Space opens Saved wheelings, Clear field deletes the layout, Esc goes back.
 
 **Joined fields:** if you have joined two or more of your fields by ploughing or cultivating the land between them, Tramline Pilot plans them as one field. Open the menu on any part of it; the header shows the fields, for example "Fields 9 + 18 (joined)". To plan them separately again, sell one of them or put grass back between them, then generate again.
+
+## Crops grown to the end of the field (soil strip)
+
+For potatoes, onions and other crops grown right to the end of the field, with no wheelings on the headland:
+
+1. In the menu, set Headland to Soil strip and pick its width: the strip of bare soil you leave at the ends when you plant.
+2. Sit in the sprayer you will use when you press Generate. The turns are worked out for it: its length, where its boom is, and whether it can back up.
+3. With Create tramlines in crop on, the crop on the strip is cleared as well, so it is bare soil to turn on.
+4. Drive to the start of the first tramline (the green flag) and press Alt+T.
+
+At the end of each tramline the worker drives on until the boom has left the crop, folds it, turns round on the strip and unfolds lined up with the next tramline, the boom just over the edge of the crop. Where the strip is too narrow to turn round in one go, it does a three-point turn. Self-propelled and mounted sprayers can back up; a trailed sprayer turns forwards only, so it needs a wider strip.
+
+The tramlines stop where the strip begins. Along the sides of the field the crop goes right to the edge.
 
 ## Seeing your tramlines
 
@@ -111,6 +124,7 @@
 - **No lines:** press Alt+4.
 - **It can't follow the corners:** set Turn radius to your machine's turning circle.
 - **Gaps in the wheel tracks:** press Generate again with Create tramlines in crop set to Wheel tracks.
+- **Turns don't fit on the soil strip:** the menu says how many. Make the strip wider (in the menu and when you plant), or the turn radius smaller. Generate again sitting in the sprayer you will use. A tramline that runs into a side of the field where it tapers has no strip to turn on at that end.
 - **Joined fields are planned separately:** the fields must be on land your farm owns, and the land between them must be field ground all the way across (ploughed or cultivated, not grass). Contract fields are planned as the map has them. Generate the layout again after joining them.
 - **The headland goes round a line across the field:** on maps where two fields were joined by taking out a hedge or wall, the ground where it stood isn't field. Tramline Pilot plans straight over a strip like that (up to about 8 m wide) when nothing stands in it, but keeps going round it if a hedge, wall, fence or trees are still there.
 

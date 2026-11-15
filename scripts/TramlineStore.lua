@@ -61,6 +61,12 @@ function TramlineStore:getSet(fieldId)
     return self.sets[fieldId]
 end
 
+-- the machine a soil strip layout was made for (its turns are drawn for it)
+function TramlineStore.stripVehicleOf(key)
+    if key == nil or key == "" then return nil end
+    return TramlineRoute.stripOpts(key)
+end
+
 function TramlineStore.newSet(fieldId)
     return {
         fieldId = fieldId,
@@ -76,6 +82,7 @@ function TramlineStore.newSet(fieldId)
         corners = "round",          -- "round" | "reverse" (back into the headland corners)
         trackWidth = 2.0,           -- m between the wheel centres, for the tracks created in the crop
         headlandDir = "either",     -- "either" (as the vehicle faces) | "cw" | "acw" (one way round, turns all that way)
+        strip = 0,                  -- m > 0: no headland tramline, a soil strip this wide at the ends to turn on
     }
 end
 
@@ -104,6 +111,7 @@ function TramlineStore:getOrCreateSet(fieldId)
             headlandOrder = "first",    -- "first" | "last" | "off"
             trackWidth = 2.0,
             headlandDir = "either",
+            strip = 0,
         }
         self.sets[fieldId] = set
     end
@@ -145,7 +153,7 @@ function TramlineStore:getJobRoute(fieldId)
     local route = nil
     if ok then
         route = TramlineRoute.tagIndices(TramlineRoute.buildJob(geo, job.sx, job.sz, job.hx, job.hz,
-            { headlandOrder = job.order, corners = job.corners == true, boomBack = job.boomBack }))
+            { headlandOrder = job.order, corners = job.corners == true, boomBack = job.boomBack, strip = job.strip }))
         ok = route ~= nil and #route == job.n
     end
     if not ok then
@@ -271,6 +279,8 @@ function TramlineStore:save()
         xmlFile:setString(key .. "#corners", set.corners or "round")
         xmlFile:setFloat(key .. "#trackWidth", set.trackWidth or 2.0)
         xmlFile:setString(key .. "#headlandDir", set.headlandDir or "either")
+        xmlFile:setFloat(key .. "#strip", set.strip or 0)
+        if set.stripVehicle ~= nil then xmlFile:setString(key .. "#stripVehicle", TramlineRoute.stripKey(set.stripVehicle)) end
         if set.refX ~= nil then
             xmlFile:setFloat(key .. "#refX", set.refX)
             xmlFile:setFloat(key .. "#refZ", set.refZ)
@@ -293,6 +303,7 @@ function TramlineStore:save()
             xmlFile:setFloat(jk .. "#dirZ", job.dirZ or job.hz)
             xmlFile:setBool(jk .. "#corners", job.corners == true)
             if job.boomBack ~= nil then xmlFile:setFloat(jk .. "#boomBack", job.boomBack) end
+            if job.strip ~= nil then xmlFile:setString(jk .. "#strip", job.strip) end
         end
         i = i + 1
     end
@@ -352,6 +363,8 @@ function TramlineStore:load()
                 corners = xmlFile:getString(key .. "#corners", "round"),
                 trackWidth = xmlFile:getFloat(key .. "#trackWidth", 2.0),
                 headlandDir = xmlFile:getString(key .. "#headlandDir", "either"),
+                strip = xmlFile:getFloat(key .. "#strip", 0),
+                stripVehicle = TramlineStore.stripVehicleOf(xmlFile:getString(key .. "#stripVehicle")),
                 refX = xmlFile:getFloat(key .. "#refX"),
                 refZ = xmlFile:getFloat(key .. "#refZ"),
             }
@@ -368,6 +381,7 @@ function TramlineStore:load()
                     dirX = xmlFile:getFloat(jk .. "#dirX"), dirZ = xmlFile:getFloat(jk .. "#dirZ"),
                     corners = xmlFile:getBool(jk .. "#corners", false),
                     boomBack = xmlFile:getFloat(jk .. "#boomBack"),
+                    strip = xmlFile:getString(jk .. "#strip"),
                 }
             end
         end

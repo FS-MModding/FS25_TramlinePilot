@@ -17,6 +17,9 @@
                       0.5 m across where it runs along the grid, ~0.35 m
                       where it runs diagonally
       PAINT_FULL    - one lane down the centre, the wheel track + 1 m wide
+    A layout with a soil strip at the ends (no headland tramline): in either
+    mode the crop on the strip is cleared too, so the worker turns on bare
+    soil (the turns themselves are not marked).
 ]]
 
 TramlinePainter = {}
@@ -231,6 +234,52 @@ local function paintPolyline(pts, closed, width, offsets)
     return count, true
 end
 
+-- The ground cells of the soil strip in front of every tramline end (inside
+-- the field, less than the strip width from the end), added to 'cells'
+-- (cell size c, grid offset o). Returns how many.
+function TramlinePainter.stripCells(geo, cells, c, o)
+    local ctx = geo.strip
+    if ctx == nil then return 0 end
+    local G = TramlineGeom
+    local poly, W, s = ctx.poly, ctx.W, geo.spacing or 24
+    local dx, dz = geo.dirX, geo.dirZ
+    local nx, nz = -dz, dx
+    local n0 = 0
+    for k in pairs(cells) do n0 = n0 + 1 end
+    local step = c * 0.7
+    -- the outermost tramlines' swaths reach on to the side of the field
+    local hasK = {}
+    for _, l in ipairs(geo.lines or {}) do if l.k ~= nil then hasK[l.k] = true end end
+    for _, l in ipairs(geo.lines or {}) do
+        local aLo = (l.k ~= nil and not hasK[l.k - 1]) and -s * 1.5 or -s * 0.5
+        local aHi = (l.k ~= nil and not hasK[l.k + 1]) and s * 1.5 or s * 0.5
+        for _, side in ipairs({ "A", "B" }) do
+            local ex, ez, ux, uz = l[3], l[4], dx, dz
+            if side == "A" then ex, ez, ux, uz = l[1], l[2], -dx, -dz end
+            -- lines across the swath of this tramline, from a little inside
+            -- the crop out to where the field ends (inside it all the way)
+            for a = aLo, aHi + 1e-6, step do
+                local ox, oz = ex + nx * a, ez + nz * a
+                for _, iv in ipairs(G.clipLine(poly, ox, oz, ux, uz)) do
+                    local t0, t1 = math.max(iv[1], -W), iv[2]
+                    if iv[1] <= 0.5 and t1 > t0 then
+                        for t = t0, t1, step do
+                            local x, z = ox + ux * t, oz + uz * t
+                            if TramlineGenerator.distEnd(ctx, x, z) < W then
+                                local i, j = floor((x - o) / c), floor((z - o) / c)
+                                cells[(j + OFF) * MUL + (i + OFF)] = true
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    local n1 = 0
+    for k in pairs(cells) do n1 = n1 + 1 end
+    return n1 - n0
+end
+
 -- geo: output of TramlineGenerator.generate; mode: one of PAINT_*;
 -- trackWidth: metres between the wheel centres (nil = TRACK_WIDTH).
 -- Returns the number of pieces painted.
@@ -258,6 +307,22 @@ function TramlinePainter.paint(geo, mode, trackWidth)
             for _, lp in ipairs(loops) do track(lp, true) end
         end
         for _, cv in ipairs(geo.curves or {}) do track(cv, false) end
+        if geo.strip ~= nil then
+            if o == nil then o = TramlinePainter.gridOffset(geo.lines[1][1], geo.lines[1][2], c) end
+            -- a tramline running into a tapering side ends at the field edge:
+            -- nothing outside the field
+            local ctx, removed = geo.strip, 0
+            for k in pairs(cells) do
+                local row, col = floor(k / MUL) - OFF, (k % MUL) - OFF
+                local x, z = (col + 0.5) * c + o, (row + 0.5) * c + o
+                if TramlineGeom.nearestEdgeDist(ctx.edgeIdx, x, z, 2) < 1.5 and not TramlineGeom.pointInPolygon(ctx.poly, x, z) then
+                    cells[k] = nil
+                    removed = removed + 1
+                end
+            end
+            local ns = TramlinePainter.stripCells(geo, cells, c, o)
+            TramlineLog.info("[TramlinePilot] soil strip: %d ground cells cleared (%d track cells outside the field left out)", ns, removed)
+        end
         local n = 0
         for _ in pairs(cells) do n = n + 1 end
         local runs, ok = TramlinePainter.paintCells(cells, c, o or 0)
@@ -285,6 +350,15 @@ function TramlinePainter.paint(geo, mode, trackWidth)
     end
     for _, c in ipairs(geo.curves or {}) do
         if ok then add(paintPolyline(c, false, width, offsets)) end
+    end
+    if ok and geo.strip ~= nil and geo.lines ~= nil and #geo.lines > 0 then
+        local c = TramlinePainter.cellSize()
+        local o = TramlinePainter.gridOffset(geo.lines[1][1], geo.lines[1][2], c)
+        local cells = {}
+        local ns = TramlinePainter.stripCells(geo, cells, c, o)
+        local runs, good = TramlinePainter.paintCells(cells, c, o)
+        add(runs, good)
+        TramlineLog.info("[TramlinePilot] soil strip: %d ground cells cleared", ns)
     end
     if not ok then
         TramlineLog.error("[TramlinePilot] could not write the ground for the tramlines")

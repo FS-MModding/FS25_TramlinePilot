@@ -124,6 +124,11 @@ function TramlineMenu:open()
             TramlineLog.warning("[TramlinePilot] could not measure the wheel track: %s", tostring(w))
         end
     end
+    -- for soil strip layouts: the machine the turns on the strip are drawn for
+    if v ~= nil and v.spec_tramlineDriver ~= nil and TramlineDriver.stripDims ~= nil then
+        local ok, d = pcall(TramlineDriver.stripDims, v)
+        if ok and d ~= nil then self.state.stripDims = d end
+    end
     if existing == nil then
         -- new field: turn radius from the vehicle we sit in (a bit roomier
         -- than its tightest turn), at least 6 m
@@ -328,6 +333,14 @@ function TramlineMenu:finish()
     local sys = self.system
     sys.store.fieldInfo = sys.store.fieldInfo or {}
     sys.store.fieldInfo[st.info.fieldId] = st.info
+    if (st.set.strip or 0) > 0 then
+        -- the turns on the soil strip, for the machine we sit in
+        if st.stripDims ~= nil then
+            st.set.stripVehicle = TramlineRoute.stripOpts(TramlineRoute.stripKey(st.stripDims))
+        end
+    else
+        st.set.stripVehicle = nil
+    end
     sys.store:putSet(st.info.fieldId, st.set)
     local geo = sys.store:regenerate(st.info.fieldId)
 
@@ -363,15 +376,26 @@ function TramlineMenu:finish()
 
     local turns = string.format("Turns: %d along the headland tramline, %d loops (radius %.0f m)",
         geo.ringTurnCount or 0, geo.loopCount or 0, geo.radius or 0)
+    if geo.stripWidth ~= nil then
+        turns = string.format("Turns on the soil strip: %d (radius %.0f m), %d of them backing up%s",
+            (geo.stripTurnCount or 0) + (geo.stripForcedCount or 0), geo.radius or 0, geo.stripBackCount or 0,
+            (geo.stripForcedCount or 0) > 0 and string.format(", %d that don't fit", geo.stripForcedCount) or "")
+    end
     if st.set.corners == "reverse" and (geo.cornerCount or 0) > 0 then
         turns = turns .. string.format("\nHeadland corners: backs into %d corner(s)", geo.cornerCount)
     end
     local warn = ""
     for _, w in ipairs(geo.warnings or {}) do warn = warn .. "\nNote: " .. w end
 
+    local headLine = string.format("Headland passes: %d", st.set.headlands)
+    local startLine = "Park on the headland tramline (orange) and press Alt+T to start the worker."
+    if geo.stripWidth ~= nil then
+        headLine = string.format("Headland: soil strip %g m at the ends (no headland tramline)", geo.stripWidth)
+        startLine = "Drive to the start of a tramline (green flag) and press Alt+T to start the worker."
+    end
     local text = string.format(
-        "%s\nArea: %.1f ha\nTramlines: %d @ %.1f m\nHeadland passes: %d\nTotal tramline length: %.0f m\n%s\n%s%s%s\n\nPark on the headland tramline (orange) and press Alt+T to start the worker.",
-        TramlineDialog.fieldName(st.info), st.info.areaHa, #geo.lines, st.set.spacing, st.set.headlands, totalLen, turns, paintLine, saveLine, warn)
+        "%s\nArea: %.1f ha\nTramlines: %d @ %.1f m\n%s\nTotal tramline length: %.0f m\n%s\n%s%s%s\n\n%s",
+        TramlineDialog.fieldName(st.info), st.info.areaHa, #geo.lines, st.set.spacing, headLine, totalLen, turns, paintLine, saveLine, warn, startLine)
 
     showInfo("Tramlines set", text)
     self.state = nil

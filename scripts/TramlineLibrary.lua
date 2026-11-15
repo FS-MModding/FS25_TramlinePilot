@@ -18,7 +18,7 @@ TramlineLibrary = {}
 TramlineLibrary.MOD_FOLDER = "FS25_TramlinePilot"
 
 -- set fields kept in a wheeling, by type
-TramlineLibrary.FLOATS  = { "ax", "az", "dx", "dz", "offset", "spacing", "turnRadius", "refX", "refZ", "trackWidth" }
+TramlineLibrary.FLOATS  = { "ax", "az", "dx", "dz", "offset", "spacing", "turnRadius", "refX", "refZ", "trackWidth", "strip" }
 TramlineLibrary.INTS    = { "headlands", "turnStyle" }
 TramlineLibrary.STRINGS = { "headlandOrder", "corners", "headlandDir" }
 TramlineLibrary.BOOLS   = { "anchorToEdge", "refillAD" }
@@ -142,8 +142,13 @@ end
 -- one line describing a wheeling (for lists)
 function TramlineLibrary.describe(w)
     local v = w.values
-    local s = string.format("%s  (%g m, %d headland pass%s", w.name, v.spacing or 0, v.headlands or 0,
-        (v.headlands or 0) == 1 and "" or "es")
+    local s
+    if (v.strip or 0) > 0 then
+        s = string.format("%s  (%g m, soil strip %g m", w.name, v.spacing or 0, v.strip)
+    else
+        s = string.format("%s  (%g m, %d headland pass%s", w.name, v.spacing or 0, v.headlands or 0,
+            (v.headlands or 0) == 1 and "" or "es")
+    end
     if v.headlandDir == "cw" then s = s .. ", clockwise" elseif v.headlandDir == "acw" then s = s .. ", anticlockwise" end
     if w.saved ~= nil and w.saved ~= "" then s = s .. ", " .. w.saved end
     return s .. ")"
@@ -151,6 +156,7 @@ end
 
 -- copy a wheeling's settings into a set
 function TramlineLibrary.apply(w, set)
+    set.strip = 0          -- (wheelings saved before the soil strip had none)
     for k, v in pairs(w.values) do set[k] = v end
     return set
 end

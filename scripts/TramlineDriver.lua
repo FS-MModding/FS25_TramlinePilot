@@ -27,6 +27,7 @@ TramlineDriver.TURN_SPEED      = 7      -- km/h in turns and tight curves
 TramlineDriver.DEFAULT_RADIUS  = 7      -- m, if the vehicle doesn't tell us
 TramlineDriver.OFF_TRACK_LIMIT = 15     -- m from the route -> stop
 TramlineDriver.UNFOLD_TIMEOUT  = 30000  -- ms
+TramlineDriver.FOLD_TIMEOUT    = 30000  -- ms (folding to turn on a soil strip)
 TramlineDriver.LOWER_TIMEOUT   = 10000  -- ms crawling while the implements lower
 TramlineDriver.SWITCH_LEAD     = 2.5    -- m: start the line this far before the boom reaches it
 TramlineDriver.REVERSE_SPEED   = 4      -- km/h backing into a headland corner
@@ -359,6 +360,111 @@ function TramlineDriver.canReverse(vehicle)
     return true
 end
 
+-- The machine as the turns on a soil strip see it, from the point it steers
+-- by: its front axle, its front and back ends, how far on from the edge of
+-- the crop it folds (the boom has left it) and whether it can back up. Any
+-- part that can't be measured is left to the defaults.
+function TramlineDriver.stripDims(vehicle)
+    local steer = TramlineDriver.getSteeringNode(vehicle)
+    local d = { reverse = TramlineDriver.canReverse(vehicle) }
+    pcall(function()
+        local zmax = nil
+        local spec = vehicle.spec_wheels
+        for _, wheel in pairs(spec ~= nil and spec.wheels or {}) do
+            local ph = wheel.physics
+            if ph ~= nil and wheel.node ~= nil and ph.positionX ~= nil then
+                local _, _, z = localToLocal(wheel.node, steer, ph.positionX, ph.positionY or 0, ph.positionZ or 0)
+                if z ~= nil and (zmax == nil or z > zmax) then zmax = z end
+            end
+        end
+        if zmax ~= nil and zmax > 1 and zmax < 10 then d.wheelbase = zmax end
+    end)
+    pcall(function()
+        local front, back = nil, nil
+        for _, obj in ipairs(childVehicles(vehicle)) do
+            local size = obj.size
+            local root = obj.components ~= nil and obj.components[1] ~= nil and obj.components[1].node or obj.rootNode
+            if size ~= nil and size.length ~= nil and size.length > 0 and root ~= nil then
+                local off = size.lengthOffset or 0
+                local _, _, zf = localToLocal(root, steer, 0, 0, off + size.length * 0.5)
+                local _, _, zb = localToLocal(root, steer, 0, 0, off - size.length * 0.5)
+                if zf ~= nil and zb ~= nil then
+                    front = math.max(front or -math.huge, zf, zb)
+                    back = math.min(back or math.huge, zf, zb)
+                end
+            end
+        end
+        if front ~= nil and front > 1 and front < 20 then d.front = front end
+        if back ~= nil and back < -0.3 and back > -30 then d.rear = -back end
+    end)
+    pcall(function()
+        local zb = nil
+        for _, obj in ipairs(childVehicles(vehicle)) do
+            if obj.getAIMarkers ~= nil then
+                local ok, l, r, b = pcall(obj.getAIMarkers, obj)
+                local m = b or l
+                if ok and m ~= nil then
+                    local _, _, z = localToLocal(m, steer, 0, 0, 0)
+                    if z ~= nil then zb = math.min(zb or z, z) end
+                end
+            end
+        end
+        if zb ~= nil and zb > -30 then d.foldBack = math.max(0, -zb) + TramlineGenerator.STRIP_FOLD_EXTRA end
+    end)
+    return d
+end
+
+-- boom off and up, then fold everything (to turn on a soil strip): a sprayer
+-- that is switched on won't fold
+function TramlineDriver.foldForTurn(vehicle)
+    for _, obj in ipairs(childVehicles(vehicle)) do
+        if obj.getIsTurnedOn ~= nil and obj.setIsTurnedOn ~= nil then
+            local ok, on = pcall(obj.getIsTurnedOn, obj)
+            if ok and on then pcall(obj.setIsTurnedOn, obj, false) end
+        end
+    end
+    TramlineDriver.forceFold(vehicle)
+end
+
+-- Standing at a soil strip stop: fold (to turn) or unfold (to spray the next
+-- tramline). Returns true when done.
+function TramlineDriver.doAct(self, dt, act, ix)
+    local spec = self.spec_tramlineDriver
+    AIVehicleUtil.driveToPoint(self, dt, 0, false, true, 0, 1, 0)
+    local a = spec.act
+    if a == nil or a.ix ~= ix then
+        a = { ix = ix, kind = act, timer = 0, poke = -1e9 }
+        spec.act = a
+        self:tramlineDriverSetWorking(false)
+        if act == "unfold" and not spec.prepared then
+            -- first unfold of this job (it set off folded): get the machine ready for work
+            TramlineDriver.raiseAIEvent(self, "onAIFieldWorkerPrepareForWork", "onAIImplementPrepareForWork")
+            spec.prepared = true
+            a.poke = 0
+        end
+    end
+    a.timer = a.timer + dt
+    local done
+    if act == "fold" then
+        if a.timer - a.poke > 2000 then a.poke = a.timer; TramlineDriver.foldForTurn(self) end
+        local folded = TramlineDriver.allFolded(self)
+        done = (a.timer > 800 and folded) or a.timer > TramlineDriver.FOLD_TIMEOUT
+        if done then spec.folded = true end
+    else
+        if a.timer - a.poke > 4000 then a.poke = a.timer; TramlineDriver.forceUnfold(self) end
+        local unfolded = TramlineDriver.allUnfolded(self)
+        done = (a.timer > 800 and unfolded) or a.timer > TramlineDriver.UNFOLD_TIMEOUT
+        if done then spec.folded = false end
+    end
+    if done then
+        TramlineLog.info("[TramlinePilot][drv] %s at waypoint %d after %.1f s%s", act == "fold" and "folded" or "unfolded", ix,
+            a.timer / 1000, a.timer > (act == "fold" and TramlineDriver.FOLD_TIMEOUT or TramlineDriver.UNFOLD_TIMEOUT) and " (gave up waiting)" or "")
+        spec.act = nil
+        spec.stuckTimer = 0
+    end
+    return done
+end
+
 -- the Giants AI event pair: root vehicle event + implement event
 function TramlineDriver.raiseAIEvent(vehicle, evt, evtImplement)
     if vehicle.raiseAIEvent ~= nil then
@@ -667,6 +773,10 @@ function TramlineDriver.beginDriving(self, fieldId, geo, route, startIx, job)
     spec.ppc = TramlineRoute.PPC.new(route, radius, startIx)
     spec.markers = TramlineDriver.findMarkerOffsets(self)
     spec.isWorking = false
+    -- (soil strip: setting off between a fold and an unfold, it starts folded)
+    spec.folded = TramlineRoute.foldedAt(route, startIx)
+    spec.prepared = false
+    spec.act = nil
     spec.state = "start"
     spec.timer = 0
     spec.lowering = false
@@ -1131,10 +1241,20 @@ function TramlineDriver:updateDriving(dt)
             TramlineDriver.raiseAIEvent(self, "onAIFieldWorkerStart", "onAIImplementStart")
             spec.state = "prepare"
         elseif spec.state == "prepare" then
-            TramlineDriver.raiseAIEvent(self, "onAIFieldWorkerPrepareForWork", "onAIImplementPrepareForWork")
-            spec.state = "unfold"
-            spec.timer = 0
-            TramlineDriver.logImplementState(self, "start")
+            if spec.folded then
+                -- sets off folded (in a turn on a soil strip): fold up, unfold later
+                spec.state = "refold"
+                spec.timer = 0
+                TramlineDriver.logImplementState(self, "start, folded")
+            else
+                TramlineDriver.raiseAIEvent(self, "onAIFieldWorkerPrepareForWork", "onAIImplementPrepareForWork")
+                spec.prepared = true
+                spec.state = "unfold"
+                spec.timer = 0
+                TramlineDriver.logImplementState(self, "start")
+            end
+        elseif spec.state == "refold" then
+            if TramlineDriver.doAct(self, dt, "fold", -1) then spec.state = "drive" end
         elseif spec.state == "unfold" then
             local done = TramlineDriver.allUnfolded(self)
             if not done and spec.timer > 4000 and not spec.forcedUnfold then
@@ -1194,6 +1314,11 @@ function TramlineDriver:updateDriving(dt)
 
     ppc:update(sx, sz)
     g_tramlineSystem.activeRouteIx = ppc.relevantIx
+    if ppc.atAct ~= nil then
+        -- soil strip: standing to fold or unfold
+        if TramlineDriver.doAct(self, dt, route[ppc.atAct].act, ppc.atAct) then ppc:actDone() end
+        return
+    end
     if (ppc.reversing == true) ~= (spec.wasReversing == true) then
         spec.wasReversing = ppc.reversing == true
         TramlineLog.info("[TramlinePilot][drv] %s at waypoint %d", spec.wasReversing and "backing into a headland corner" or "driving on", ppc.relevantIx)
@@ -1255,7 +1380,7 @@ function TramlineDriver:updateDriving(dt)
     local m = spec.markers or { front = 0, back = 0 }
     local pf = m.front + TramlineDriver.SWITCH_LEAD
     local lo, hi = ppc.sectionStart, ppc.sectionEnd
-    local work = not rev and (TramlineRoute.workAt(route, ppc.currentIx, dx + hx * pf, dz + hz * pf, lo, hi)
+    local work = not rev and not spec.folded and (TramlineRoute.workAt(route, ppc.currentIx, dx + hx * pf, dz + hz * pf, lo, hi)
         or TramlineRoute.workAt(route, ppc.currentIx, dx + hx * m.back, dz + hz * m.back, lo, hi))
     self:tramlineDriverSetWorking(work)
 

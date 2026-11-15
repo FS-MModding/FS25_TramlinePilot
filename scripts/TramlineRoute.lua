@@ -10,9 +10,12 @@
     Route waypoints: { x, z, work = bool, turn = bool, kind = string,
                        rl, ri, rd = headland tramline (level, index, direction
                                     of travel) the segment runs along, or nil,
-                       rev = true: driven in reverse (backing into a corner) }
+                       rev = true: driven in reverse (backing into a corner,
+                                   or round on a soil strip),
+                       act = "fold" | "unfold": stop here and fold / unfold
+                                   (soil strip turns) }
       'work', 'turn' and the ring tags describe the segment ENDING at the
-      waypoint.
+      waypoint; 'act' the waypoint itself.
 ]]
 
 TramlineRoute = {}
@@ -39,12 +42,42 @@ local function add(route, pts, flags)
         if last == nil or (p[1] - last[1]) ^ 2 + (p[2] - last[2]) ^ 2 >= 0.09 then
             list[#list + 1] = { p[1], p[2], work = flags.work, turn = flags.turn, kind = flags.kind,
                                 rl = p.rl or flags.rl, ri = p.ri or flags.ri, rd = p.rd or flags.rd,
-                                rev = p.rev or flags.rev }
+                                rev = p.rev or flags.rev, act = p.act }
         end
     end
 end
 
 local function lastPoint(route) return route.list[#route.list] end
+
+-- stop at the last point added and fold / unfold
+local function markAct(route, act)
+    local p = route.list[#route.list]
+    if p ~= nil then p.act = act end
+end
+
+-------------------------------------------------------------------------------
+-- The machine on a soil strip (see TramlineGenerator.planStripTurn), kept
+-- with a job as one string: foldBack / wheelbase / front / rear / can reverse
+-------------------------------------------------------------------------------
+
+function TramlineRoute.stripKey(d)
+    if d == nil then return nil end
+    local function f(v) return v ~= nil and string.format("%.1f", v) or "-" end
+    return string.format("%s/%s/%s/%s/%s", f(d.foldBack), f(d.wheelbase), f(d.front), f(d.rear), d.reverse == false and "0" or "1")
+end
+
+function TramlineRoute.stripOpts(key, geo)
+    local o = { R = geo and geo.radius or nil, reverse = true,
+                foldBack = TramlineGenerator.STRIP_BOOM_BACK + TramlineGenerator.STRIP_FOLD_EXTRA }
+    if type(key) == "string" then
+        local parts = {}
+        for v in string.gmatch(key, "[^/]+") do parts[#parts + 1] = v end
+        o.foldBack = tonumber(parts[1]) or o.foldBack
+        o.wheelbase, o.front, o.rear = tonumber(parts[2] or ""), tonumber(parts[3] or ""), tonumber(parts[4] or "")
+        o.reverse = parts[5] ~= "0"
+    end
+    return o
+end
 
 -- drive one line from 'fromSide' to the other end; boom only on the working
 -- stretch. startTrim/endTrim: metres left out at the start/end, where a
@@ -119,6 +152,9 @@ function TramlineRoute.buildJob(geo, vx, vz, hx, hz, opts)
     local spokes = geo.spokes
     local GAP = 3 * R + 6       -- a lap may stop this short of closing when it leaves via a crossing
     local route = newRoute()
+    -- soil strip: the turns are worked out for this machine
+    local stripOpts = (geo.strip ~= nil) and TramlineRoute.stripOpts(opts.strip, geo) or nil
+    local stripForced = 0
 
     -- ring paths per level
     local ringPaths = {}
@@ -323,7 +359,9 @@ function TramlineRoute.buildJob(geo, vx, vz, hx, hz, opts)
         local bestB, bestE, bestDist = nil, nil, math.huge
         for b, blk in ipairs(geo.blocks) do
             if not done[b] then
-                for e = 1, 2 do
+                -- (soil strip: each part from its first tramline, the way its
+                -- turns are drawn)
+                for e = 1, (stripOpts ~= nil) and 1 or 2 do
                     local E = blk.ends[e]
                     if H > 0 then
                         local en = E.entry[cur.sense]
@@ -379,7 +417,26 @@ function TramlineRoute.buildJob(geo, vx, vz, hx, hz, opts)
 
         -- get to the block
         local startTrim = 0
-        if H > 0 then
+        if stripOpts ~= nil and lastPoint(route) ~= nil then
+            -- from the last block, folded: out of its crop, over to this one
+            -- (between parts of the field over the crop), unfold in the tramline
+            local p = lastPoint(route)
+            local prev = route.list[#route.list - 1] or p
+            local ux, uz = G.normalize(p[1] - prev[1], p[2] - prev[2])
+            local fb = stripOpts.foldBack
+            add(route, { { p[1] + ux * fb, p[2] + uz * fb } }, { work = false, kind = "strip" })
+            markAct(route, "fold")
+            local q = lastPoint(route)
+            local lead = TramlineGenerator.STRIP_LEAD
+            local bx, bz = E.x + E.ux * lead, E.z + E.uz * lead
+            local path = G.dubins(q[1], q[2], G.atan2(uz, ux), bx, bz, G.atan2(-E.uz, -E.ux), R)
+            if path ~= nil then add(route, (G.dubinsPoints(path, 0.5)), { work = false, turn = true, kind = "approach" }) end
+            add(route, { { E.x, E.z } }, { work = false, turn = true, kind = "strip" })
+            local ub = max(0, fb - TramlineGenerator.STRIP_FOLD_EXTRA)
+            add(route, { { E.x - E.ux * ub, E.z - E.uz * ub } }, { work = true, kind = "strip" })
+            markAct(route, "unfold")
+            startTrim = ub
+        elseif H > 0 then
             local en = E.entry[cur.sense]
             transit(en.s)
             add(route, en.pts, { work = false, turn = true, kind = "junction" })
@@ -387,17 +444,40 @@ function TramlineRoute.buildJob(geo, vx, vz, hx, hz, opts)
         else
             local p = lastPoint(route)
             local px, pz, ph
+            local inLine = false
             if p == nil then
                 px, pz, ph = vx, vz, G.atan2(hz or 0, hx or 1)
                 if (E.x - vx) ^ 2 + (E.z - vz) ^ 2 > 40 * 40 then return nil, "drive to the end of a tramline to start" end
                 add(route, { { vx, vz } }, { work = false, kind = "start" })
+                -- standing in the first tramline already, facing along it: off from here
+                local l1 = geo.lines[E.line]
+                local ix, iz = -E.ux, -E.uz
+                local rx, rz = vx - E.x, vz - E.z
+                local along = rx * ix + rz * iz
+                local hl = sqrt((hx or 0) ^ 2 + (hz or 0) ^ 2)
+                if l1 ~= nil and along > 0.5 and along < l1.len - 1 and abs(rx * iz - rz * ix) < 1.5
+                        and hl > 0 and ((hx or 0) * ix + (hz or 0) * iz) / hl > 0.87 then
+                    inLine = true
+                    startTrim = along
+                end
             else
                 local prev = route.list[#route.list - 1] or p
                 local ux, uz = G.normalize(p[1] - prev[1], p[2] - prev[2])
                 px, pz, ph = p[1], p[2], G.atan2(uz, ux)
             end
-            local path = G.dubins(px, pz, ph, E.x, E.z, G.atan2(-E.uz, -E.ux), R)
-            if path ~= nil then add(route, (G.dubinsPoints(path, 0.5)), { work = false, turn = true, kind = "approach" }) end
+            if not inLine then
+                local path = G.dubins(px, pz, ph, E.x, E.z, G.atan2(-E.uz, -E.ux), R)
+                if path ~= nil then add(route, (G.dubinsPoints(path, 0.5)), { work = false, turn = true, kind = "approach" }) end
+                if stripOpts ~= nil and p == nil then
+                    -- soil strip: over to the first tramline folded, unfold in it
+                    -- (the boom just over the edge of the crop)
+                    add(route, { { E.x, E.z } }, { work = false, turn = true, kind = "approach" })
+                    local ub = max(0, stripOpts.foldBack - TramlineGenerator.STRIP_FOLD_EXTRA)
+                    add(route, { { E.x - E.ux * ub, E.z - E.uz * ub } }, { work = true, kind = "strip" })
+                    markAct(route, "unfold")
+                    startTrim = ub
+                end
+            end
         end
 
         -- drive the block
@@ -411,6 +491,13 @@ function TramlineRoute.buildJob(geo, vx, vz, hx, hz, opts)
             local conn = nil
             if qi < #seq then conn = blk.conns[reverse and (j - 1) or j] end
             local rc = nil     -- ring turn in driving order
+            local st = nil     -- soil strip turn in driving order
+            if conn ~= nil and conn.kind == "strip" then
+                local fromId, toId = conn.from, conn.to
+                if reverse then fromId, toId = conn.to, conn.from end
+                st = TramlineGenerator.stripTurnFor(geo, fromId, toId, conn.side, stripOpts)
+                if st ~= nil and st.forced then stripForced = stripForced + 1 end
+            end
             if conn ~= nil and conn.kind == "ring" then
                 if not reverse then
                     rc = { exitArc = conn.exitArc, exitTrim = conn.exitTrim, s0 = conn.s0,
@@ -429,7 +516,28 @@ function TramlineRoute.buildJob(geo, vx, vz, hx, hz, opts)
             driveLine(route, l, side, startTrim, endTrim)
             startTrim = 0
             if conn ~= nil then
-                if conn.kind == "loop" then
+                if conn.kind == "strip" then
+                    if st ~= nil then
+                        -- on until the boom has left the crop, fold, round on
+                        -- the strip, lined up into the next tramline, and on in
+                        -- it until the boom is over the edge of the crop: unfold
+                        add(route, { st.F }, { work = false, kind = "strip" })
+                        markAct(route, "fold")
+                        for _, pc in ipairs(st.pieces) do
+                            add(route, pc.pts, { work = false, turn = true, kind = "strip", rev = pc.rev })
+                        end
+                        add(route, { st.P2 }, { work = false, turn = true, kind = "strip" })
+                        local nl = geo.lines[reverse and conn.from or conn.to]
+                        local ndx, ndz = G.normalize(nl[3] - nl[1], nl[4] - nl[2])
+                        local nside = entrySideForward(seq[qi + 1])
+                        if reverse then nside = otherSide(nside) end
+                        if nside == "B" then ndx, ndz = -ndx, -ndz end
+                        local ub = max(0, st.foldBack - TramlineGenerator.STRIP_FOLD_EXTRA)
+                        add(route, { { st.P2[1] + ndx * ub, st.P2[2] + ndz * ub } }, { work = true, kind = "strip" })
+                        markAct(route, "unfold")
+                        startTrim = ub
+                    end
+                elseif conn.kind == "loop" then
                     local pts = conn.pts
                     if reverse then pts = G.reverse(pts) end
                     add(route, pts, { work = false, turn = true, kind = "loop" })
@@ -452,6 +560,12 @@ function TramlineRoute.buildJob(geo, vx, vz, hx, hz, opts)
     ---------------------------------------------------------------------------
     -- finish
     ---------------------------------------------------------------------------
+    if stripOpts ~= nil and #route.list >= 2 then
+        -- on out of the crop until the boom has sprayed the last of it
+        local p, prev = route.list[#route.list], route.list[#route.list - 1]
+        local ux, uz = G.normalize(p[1] - prev[1], p[2] - prev[2])
+        add(route, { { p[1] + ux * stripOpts.foldBack, p[2] + uz * stripOpts.foldBack } }, { work = false, kind = "strip" })
+    end
     if H > 0 then
         if order == "last" then headlandLaps() end
         -- run out a little along the ring so the vehicle ends on the tramline
@@ -460,6 +574,11 @@ function TramlineRoute.buildJob(geo, vx, vz, hx, hz, opts)
 
     local list = route.list
     if #list < 2 then return nil, "nothing to do" end
+    if stripForced > 0 and geo.stripForcedLogged ~= tostring(opts.strip) then
+        geo.stripForcedLogged = tostring(opts.strip)       -- (once per layout and machine)
+        TramlineLog.info("[TramlinePilot][route] soil strip: %d turn(s) don't fit on the strip for this machine (%s) - it turns over the crop there",
+            stripForced, tostring(opts.strip))
+    end
     return list
 end
 
@@ -473,8 +592,9 @@ function TramlineRoute.layoutSignature(geo)
     local n, tot = #geo.lines, 0
     for _, l in ipairs(geo.lines) do tot = tot + (l.len or 0) end
     local a, b = geo.lines[1], geo.lines[n]
-    return string.format("%d/%d/%.1f/%.0f/%.0f,%.0f/%.0f,%.0f%s", n, geo.headlands or 0, geo.spacing or 0, tot,
-        a[1], a[2], b[3], b[4], geo.headlandDir ~= nil and ("/" .. geo.headlandDir) or "")
+    return string.format("%d/%d/%.1f/%.0f/%.0f,%.0f/%.0f,%.0f%s%s", n, geo.headlands or 0, geo.spacing or 0, tot,
+        a[1], a[2], b[3], b[4], geo.headlandDir ~= nil and ("/" .. geo.headlandDir) or "",
+        geo.stripWidth ~= nil and string.format("/strip%g", geo.stripWidth) or "")
 end
 
 local function segLen(a, b) return sqrt((b[1] - a[1]) ^ 2 + (b[2] - a[2]) ^ 2) end
@@ -544,17 +664,19 @@ end
 -- direction, each starting straight into that block. Starting mid-field
 -- means the headland was done first, so it is left out - unless the set
 -- sprays it last. Cached on the layout.
-function TramlineRoute.joinCandidates(geo, order, corners, boomBack)
+function TramlineRoute.joinCandidates(geo, order, corners, boomBack, strip)
     local key = (order == "last") and "last" or "off"
-    local cacheKey = key .. (corners and string.format("+corners%.1f", boomBack or TramlineRoute.BOOM_BACK) or "")
+    local cacheKey = key .. (corners and string.format("+corners%.1f", boomBack or TramlineRoute.BOOM_BACK) or "") .. (strip and ("+strip" .. strip) or "")
     geo.joinCache = geo.joinCache or {}
     if geo.joinCache[cacheKey] ~= nil then return geo.joinCache[cacheKey] end
     local list = {}
     local H = geo.headlands or 0
     for _, blk in ipairs(geo.blocks or {}) do
-        for _, E in ipairs(blk.ends or {}) do
+        for e, E in ipairs(blk.ends or {}) do
             local starts = {}
-            if H > 0 then
+            if geo.strip ~= nil and e > 1 then
+                -- soil strip: a part starts at its first tramline
+            elseif H > 0 then
                 local lp = geo.rings[H] and geo.rings[H][E.ring or 1]
                 if lp ~= nil then
                     local rp = lp.path
@@ -572,10 +694,10 @@ function TramlineRoute.joinCandidates(geo, order, corners, boomBack)
             end
             for _, st in ipairs(starts) do
                 local route = TramlineRoute.tagIndices(TramlineRoute.buildJob(geo, st[1], st[2], st[3], st[4],
-                    { headlandOrder = key, corners = corners, boomBack = boomBack }))
+                    { headlandOrder = key, corners = corners, boomBack = boomBack, strip = strip }))
                 if route ~= nil then
                     list[#list + 1] = { route = route, sx = st[1], sz = st[2], hx = st[3], hz = st[4], order = key,
-                                        corners = corners, boomBack = boomBack }
+                                        corners = corners, boomBack = boomBack, strip = strip }
                 end
             end
         end
@@ -587,9 +709,9 @@ end
 -- A new job joining the layout where the vehicle is (on a main tramline or
 -- a turn): the candidate that passes over the least spraying before it.
 -- Returns { cand, at = resumeIndex result } or nil
-function TramlineRoute.findJoin(geo, order, vx, vz, hx, hz, corners, boomBack)
+function TramlineRoute.findJoin(geo, order, vx, vz, hx, hz, corners, boomBack, strip)
     local best = nil
-    for _, c in ipairs(TramlineRoute.joinCandidates(geo, order, corners, boomBack)) do
+    for _, c in ipairs(TramlineRoute.joinCandidates(geo, order, corners, boomBack, strip)) do
         local at = TramlineRoute.resumeIndex(c.route, 1, vx, vz, hx, hz)
         if at ~= nil and (best == nil or at.skipped < best.at.skipped) then
             best = { cand = c, at = at }
@@ -1315,10 +1437,13 @@ function TramlineRoute.startPoint(geo, vx, vz, hx, hz)
         if best ~= nil then best.ready = best.d <= TramlineRoute.MAX_START_DIST end
     else
         for _, blk in ipairs(geo.blocks or {}) do
-            for _, E in ipairs(blk.ends or {}) do
-                local d = sqrt((E.x - vx) ^ 2 + (E.z - vz) ^ 2)
-                if best == nil or d < best.d then
-                    best = { x = E.x, z = E.z, dirX = -E.ux, dirZ = -E.uz, d = d }
+            for e, E in ipairs(blk.ends or {}) do
+                -- (soil strip: a part starts at its first tramline)
+                if e == 1 or geo.strip == nil then
+                    local d = sqrt((E.x - vx) ^ 2 + (E.z - vz) ^ 2)
+                    if best == nil or d < best.d then
+                        best = { x = E.x, z = E.z, dirX = -E.ux, dirZ = -E.uz, d = d }
+                    end
                 end
             end
         end
@@ -1360,13 +1485,14 @@ function PPC.new(route, turningRadius, startIx)
 end
 
 -- the stretch driven in one direction (forwards / in reverse) from relevantIx:
--- it ends at waypoint sectionEnd, where the vehicle stops and changes direction
+-- it ends at waypoint sectionEnd, where the vehicle stops and changes
+-- direction, or stops to fold or unfold
 function PPC:setSection()
     local route = self.route
     local i = self.relevantIx
     local rev = route[i + 1] ~= nil and route[i + 1].rev == true
     local e = i + 1
-    while route[e + 1] ~= nil and (route[e + 1].rev == true) == rev do e = e + 1 end
+    while route[e + 1] ~= nil and (route[e + 1].rev == true) == rev and route[e].act == nil do e = e + 1 end
     self.sectionStart = i
     self.sectionEnd = min(e, #route)
     self.reversing = rev
@@ -1379,6 +1505,11 @@ local function segDir(route, ix)
     local dx, dz, l = G.normalize(b[1] - a[1], b[2] - a[2])
     if l < 1e-6 then return 0, 1 end
     return dx, dz
+end
+
+-- the fold / unfold at waypoint atAct is done: on with the next stretch
+function PPC:actDone()
+    if self.atAct ~= nil then self.actDoneAt = self.atAct end
 end
 
 -- passed waypoint ix: ahead of it in its own direction, and reasonably close
@@ -1397,11 +1528,18 @@ function PPC:update(vx, vz)
     if self.initializing and self:passed(self.relevantIx, vx, vz) then
         self.initializing = false
     end
-    -- at the end of a stretch: change direction once there
+    -- at the end of a stretch: change direction once there (or first stand
+    -- there until the worker has folded / unfolded: actDone)
     local se = self.sectionEnd or #route
     if se < #route and self.relevantIx >= se - 1 then
         local p = route[se]
         if self:passed(se, vx, vz) or (vx - p[1]) ^ 2 + (vz - p[2]) ^ 2 < 0.8 * 0.8 then
+            if p.act ~= nil and self.actDoneAt ~= se then
+                self.atAct = se
+                self.goalX, self.goalZ = p[1], p[2]
+                return
+            end
+            self.atAct = nil
             self.relevantIx = se
             self.initializing = false
             self.wpBeforeGoalIx = nil
@@ -1482,6 +1620,24 @@ function PPC:update(vx, vz)
     local last = route[se]
     self.goalX, self.goalZ = last[1], last[2]
     self.wpBeforeGoalIx = se - 1
+end
+
+-- Is the boom folded at route waypoint ix: after a fold, or before the first
+-- unfold (a soil strip job that sets off folded)?
+function TramlineRoute.foldedAt(route, ix)
+    ix = ix or 1
+    -- (setting off from a fold / unfold waypoint itself: the controller only
+    -- gets past one once it is done, so it is done)
+    for i = min(ix, #route), 1, -1 do
+        local a = route[i].act
+        if a == "fold" then return true end
+        if a == "unfold" then return false end
+    end
+    for i = ix + 1, #route do
+        local a = route[i].act
+        if a ~= nil then return a == "unfold" end
+    end
+    return false
 end
 
 -- work flag of the route at (px,pz), looked up around waypoint ix (within

@@ -62,6 +62,10 @@ end
 function TramlineSystem.describeSet(set)
     if set == nil then return "none" end
     local dir = math.deg(math.atan2(set.dx or 0, -(set.dz or 1))) % 360
+    if (set.strip or 0) > 0 then
+        return string.format("spacing %g m, direction %.0f deg, soil strip %g m at the ends (no headland tramline), turn radius %g m, wheel track %.2f m",
+            set.spacing or 0, dir, set.strip, set.turnRadius or 0, set.trackWidth or 2)
+    end
     return string.format("spacing %g m, direction %.0f deg, %d headland pass(es) done %s going %s, corners %s, turns %s, turn radius %g m, wheel track %.2f m, AutoDrive refill %s",
         set.spacing or 0, dir, set.headlands or 0, tostring(set.headlandOrder or "first"), tostring(set.headlandDir or "either"), tostring(set.corners or "round"),
         (set.turnStyle == 2) and "loops" or "along the headland", set.turnRadius or 0, set.trackWidth or 2,
@@ -261,6 +265,17 @@ function TramlineSystem:planStart(fieldId, vx, vz, hx, hz, forceNew, preview, ve
         local ok, mk = pcall(TramlineDriver.findMarkerOffsets, vehicle)
         if ok and mk ~= nil and mk.back ~= nil then boomBack = math.floor(math.max(0, -mk.back) * 10 + 0.5) / 10 end
     end
+    -- soil strip: the turns on it fit the machine (how long it is, where its
+    -- boom is, whether it can back up)
+    local strip = nil
+    if geo.strip ~= nil then
+        local dims = nil
+        if vehicle ~= nil then
+            local ok, d = pcall(TramlineDriver.stripDims, vehicle)
+            if ok then dims = d end
+        end
+        strip = TramlineRoute.stripKey(dims or {})
+    end
 
     -- 1. the unfinished job
     local job = self.store:getJob(fieldId)
@@ -289,21 +304,21 @@ function TramlineSystem:planStart(fieldId, vx, vz, hx, hz, forceNew, preview, ve
     end
     if sp ~= nil and sp.ready then
         local at = { ix = 1, skipped = 0, x = sp.x, z = sp.z, dirX = sp.dirX, dirZ = sp.dirZ }
-        local plan = { kind = "new", at = at, job = { sx = vx, sz = vz, hx = hx, hz = hz, order = order, corners = corners, boomBack = boomBack } }
+        local plan = { kind = "new", at = at, job = { sx = vx, sz = vz, hx = hx, hz = hz, order = order, corners = corners, boomBack = boomBack, strip = strip } }
         if not preview then
             plan.route = TramlineRoute.tagIndices(TramlineRoute.buildJob(geo, vx, vz, hx, hz,
-                { headlandOrder = order, corners = corners, boomBack = boomBack }))
+                { headlandOrder = order, corners = corners, boomBack = boomBack, strip = strip }))
             if plan.route == nil then plan = nil end
         end
         if plan ~= nil then return plan end
     end
 
     -- 3. a new job from the main tramline or turn the vehicle is on
-    local j = TramlineRoute.findJoin(geo, order, vx, vz, hx, hz, corners, boomBack)
+    local j = TramlineRoute.findJoin(geo, order, vx, vz, hx, hz, corners, boomBack, strip)
     if j ~= nil then
         local c = j.cand
         return { kind = "new", route = c.route, at = j.at, joined = true,
-                 job = { sx = c.sx, sz = c.sz, hx = c.hx, hz = c.hz, order = c.order, corners = c.corners, boomBack = c.boomBack } }
+                 job = { sx = c.sx, sz = c.sz, hx = c.hx, hz = c.hz, order = c.order, corners = c.corners, boomBack = c.boomBack, strip = c.strip } }
     end
 
     if sp ~= nil then return { kind = "away", x = sp.x, z = sp.z, dirX = sp.dirX, dirZ = sp.dirZ } end
@@ -365,12 +380,13 @@ function TramlineSystem:previewRoute(fieldId, job, vx, vz, hx, hz)
     if geo == nil or job == nil then return nil end
     local c = self.previewRouteCache
     local same = c ~= nil and c.geo == geo and c.order == job.order and c.corners == job.corners and c.boomBack == job.boomBack
+        and c.strip == job.strip
     if same and (vx - c.x) ^ 2 + (vz - c.z) ^ 2 < 9 and hx * c.hx + hz * c.hz > 0.9 then return c.route end
     local now = g_time or 0
     if same and now - c.time < 900 then return c.route end
     local route = TramlineRoute.buildJob(geo, vx, vz, hx, hz,
-        { headlandOrder = job.order, corners = job.corners, boomBack = job.boomBack })
-    self.previewRouteCache = { geo = geo, order = job.order, corners = job.corners, boomBack = job.boomBack,
+        { headlandOrder = job.order, corners = job.corners, boomBack = job.boomBack, strip = job.strip })
+    self.previewRouteCache = { geo = geo, order = job.order, corners = job.corners, boomBack = job.boomBack, strip = job.strip,
                                x = vx, z = vz, hx = hx, hz = hz, time = now, route = route }
     return route
 end
