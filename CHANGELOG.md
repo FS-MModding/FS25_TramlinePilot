@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.2.0.1 (15 November 2026)
+
+### Changes
+
+- **Soil strip: no crop missed at the ends of the tramlines.**
+  - At the end of a tramline the boom now stays on until all of it is past the crop. The worker then drives about 2 m further onto the strip before it folds.
+  - Where the end of the field is at an angle to the tramlines, the crop goes on further at one end of the boom. The boom now covers that as well.
+  - At the start of the next tramline the worker still unfolds in the tramline. It then backs out onto the strip to where its turn finished and sprays forwards from there, so the boom comes on just before the crop starts.
+  - A trailed sprayer can't back out, so it unfolds where the boom is just short of the crop and sprays on from there.
+  - The worker now drives right up to the spot where it folds. Before, it could stop up to 0.8 m short.
+  - Where a strip is only just wide enough, the worker drives out less than 2 m if that lets it turn round, or turn round without backing up.
+  - The turns now keep the rear wheels off the crop too, on machines that steer from the middle (the rear axle well behind the point they steer by).
+  - The menu tells you how many tramline ends have no room on the strip to get the whole boom off the crop before folding, for example where the end of the field meets a side at an angle. The boom sprays as far as it can there.
+
+### Fixes
+
+- Carrying on after a stop in the middle of a soil strip turn no longer unfolds the boom and folds it again where the worker stands.
+- When backing up on a soil strip, the worker's log said it was backing into a headland corner.
+
 ## 1.2.0.0 (15 November 2026)
 
 ### New

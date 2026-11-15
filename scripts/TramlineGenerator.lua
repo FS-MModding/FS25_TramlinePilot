@@ -388,8 +388,14 @@ TramlineGenerator.STRIP_BOOM_BACK   = 3.0   -- m the boom is behind the vehicle 
 TramlineGenerator.STRIP_FOLD_EXTRA  = 0.5   -- m on past where the boom leaves the crop before folding
 TramlineGenerator.STRIP_STEP        = 0.5   -- m between the points of a turn
 TramlineGenerator.STRIP_SHIFT_COST  = 15    -- m a stop to change direction is worth
+TramlineGenerator.STRIP_RUN_OUT     = 2.0   -- m the boom goes on past the last of the crop (anywhere across it) before folding, room allowing
+TramlineGenerator.STRIP_RUN_OUT_MIN = 0.6   -- m of that kept where a shorter run out lets it turn (or turn without backing up)
+TramlineGenerator.STRIP_RUN_IN      = 1.0   -- m before the first of the crop the boom comes on, starting a tramline
+TramlineGenerator.STRIP_STOP_TOL    = 0.3   -- m short of a fold stop the vehicle may halt (TramlineRoute.ACT_REACH)
 -- the vehicle as the turns see it: from the point it steers by (the rear
--- axle on most machines) to its front axle, front end and back end
+-- axle on most machines) to its front axle, front end and back end, and to
+-- its rear axle where that is behind the point (a machine that steers from
+-- its middle)
 TramlineGenerator.STRIP_WHEELBASE   = 4.0
 TramlineGenerator.STRIP_FRONT       = 5.5
 TramlineGenerator.STRIP_REAR        = 2.0
@@ -523,14 +529,129 @@ local function stripFree(ctx, x, z, kind)
     return TramlineGenerator.distEnd(ctx, x, z) <= ctx.W - TramlineGenerator.STRIP_CROP_MARGIN
 end
 
+-- How far on from (px,pz) - where the crop stops on a tramline, (ux,uz) the
+-- way out of it - there is still crop somewhere across the boom (hw either
+-- side): where the end of the field isn't square to the tramlines the crop
+-- goes on further at one end of the boom. Looked for up to 'cap' m.
+function TramlineGenerator.cropBeyond(ctx, px, pz, ux, uz, hw, cap)
+    local W, distEnd = ctx.W, TramlineGenerator.distEnd
+    local vx, vz = -uz, ux
+    local n = max(2, ceil(2 * hw))          -- about every metre across
+    local best = 0
+    for i = 0, n do
+        local a = -hw + 2 * hw * i / n
+        local ox, oz = px + vx * a, pz + vz * a
+        local function crop(t)
+            local x, z = ox + ux * t, oz + uz * t
+            return distEnd(ctx, x, z) >= W and G.pointInPolygon(ctx.poly, x, z)
+        end
+        local t = 0
+        if crop(0) then
+            while t < cap and crop(t) do t = t + 0.25 end
+            if t < cap then
+                -- where it stops, between t - 0.25 and t
+                local lo, hi = t - 0.25, t
+                for _ = 1, 5 do
+                    local m = (lo + hi) * 0.5
+                    if crop(m) then lo = m else hi = m end
+                end
+                t = hi
+            end
+        end
+        if t > best then best = t end
+    end
+    return min(best, cap)
+end
+
+local function boomBackOf(opts)
+    return max(0, ((opts and opts.foldBack) or (TramlineGenerator.STRIP_BOOM_BACK + TramlineGenerator.STRIP_FOLD_EXTRA))
+        - TramlineGenerator.STRIP_FOLD_EXTRA)
+end
+
+-- the furthest y from y0 towards y1 (0.25 m at a time) that ok(y) allows all
+-- the way; nil if not even y0
+local function furthest(y0, y1, ok)
+    if not ok(y0) then return nil end
+    local y = y0
+    while y < y1 - 1e-6 do
+        local yn = min(y1, y + 0.25)
+        if not ok(yn) then return y end
+        y = yn
+    end
+    return y
+end
+
+-- The end of a tramline at the strip: (px,pz) where the crop stops on it,
+-- (ux,uz) on out. The worker drives on until the boom (opts.foldBack less
+-- STRIP_FOLD_EXTRA behind) is STRIP_RUN_OUT past the last of the crop
+-- anywhere across it - as far as there is room for the front of the vehicle
+-- in the field - and folds there. Returns { fb = m on to the fold, workEnd
+-- = m on the boom stays on, clear = m the boom gets past the last of the
+-- crop (< 0: it can't get right out), delta = m the crop goes on past
+-- (px,pz) across the boom }, or nil if the boom can't even get off the
+-- crop where the tramline runs.
+function TramlineGenerator.stripFoldAt(geo, px, pz, ux, uz, opts)
+    local ctx = geo.strip
+    if ctx == nil then return nil end
+    opts = opts or {}
+    local FRONT = opts.front or TramlineGenerator.STRIP_FRONT
+    local bb = boomBackOf(opts)
+    local delta = TramlineGenerator.cropBeyond(ctx, px, pz, ux, uz, (geo.spacing or 24) * 0.5, ctx.W + 2)
+    local fbMin = bb + TramlineGenerator.STRIP_FOLD_EXTRA
+    local fbWant = max(fbMin, bb + delta + TramlineGenerator.STRIP_RUN_OUT)
+    local fb = furthest(fbMin, fbWant, function(y)
+        return stripFree(ctx, px + ux * (y + FRONT), pz + uz * (y + FRONT), "body")
+    end)
+    if fb == nil then return nil end
+    -- (the vehicle stops up to STRIP_STOP_TOL short of it)
+    return { fb = fb, workEnd = max(0, fb - bb - 0.3), clear = fb - TramlineGenerator.STRIP_STOP_TOL - bb - delta, delta = delta }
+end
+
+-- The start of a tramline from the strip: (px,pz) where the crop starts on
+-- it, (ux,uz) back out. The worker drives in until the boom is over the edge
+-- of the crop, unfolds, backs up out of the tramline to yS out on the strip
+-- (at least yMin - the end of the turn - if there is room, and further if
+-- the crop starts further out somewhere across the boom) and sprays from
+-- there, the boom coming on yW out. A machine that can't back up unfolds
+-- where the boom is yW out instead (on the strip, or in the tramline) and
+-- sprays on from there. Returns { ub = m in to unfold (< 0: out on the
+-- strip), yS (nil: no backing up), yW, delta }.
+function TramlineGenerator.stripStartAt(geo, px, pz, ux, uz, opts, yMin)
+    local ctx = geo.strip
+    opts = opts or {}
+    local bb = boomBackOf(opts)
+    local REAR = opts.rear or TramlineGenerator.STRIP_REAR
+    local RA = opts.rearAxle or 0
+    local delta = ctx ~= nil and TramlineGenerator.cropBeyond(ctx, px, pz, ux, uz, (geo.spacing or 24) * 0.5, ctx.W + 2) or 0
+    local yW = delta + TramlineGenerator.STRIP_RUN_IN
+    if opts.reverse == false then
+        return { ub = max(0.5 - TramlineGenerator.STRIP_LEAD, bb - yW), yS = nil, yW = yW, delta = delta }
+    end
+    local want = max(yMin or 0, yW - bb)
+    local yS = nil
+    if ctx ~= nil then
+        local wheelDist = TramlineGenerator.STRIP_EDGE_MARGIN + 0.5
+        yS = furthest(0, want, function(y)
+            -- facing into the tramline: its back end out on the strip, its
+            -- wheels (on the tramline's own line) off the field edge
+            if not stripFree(ctx, px + ux * (y + REAR), pz + uz * (y + REAR), "body") then return false end
+            if y > 0 and G.nearestEdgeDist(ctx.edgeIdx, px + ux * y, pz + uz * y, 4) < wheelDist then return false end
+            return RA <= 0.3 or G.nearestEdgeDist(ctx.edgeIdx, px + ux * (y + RA), pz + uz * (y + RA), 4) >= wheelDist
+        end)
+    end
+    return { ub = bb, yS = yS, yW = yW, delta = delta }
+end
+
 -- A turn on the soil strip from the end of line la (side sA) to the end of
 -- line lb (side sB), both where the crop stops. opts:
---   foldBack  m on from the crop edge to where it folds (the boom behind + STRIP_FOLD_EXTRA)
+--   foldBack  the boom's distance behind the vehicle + STRIP_FOLD_EXTRA
 --   reverse   the vehicle can back up (three-point turns)
---   R         turn radius;  wheelbase, front, rear: the vehicle (defaults above)
--- Returns { P1, F, B, P2, pieces = { { pts, rev }, ... }, len, shifts }:
---   P1 -> F straight on out of the crop, fold at F, the pieces (forwards or
---   backwards), then B -> P2 straight into the next tramline;
+--   R         turn radius;  wheelbase, front, rear, rearAxle: the vehicle (defaults above)
+-- Returns { P1, F, B, P2, S, pieces = { { pts, rev }, ... }, len, shifts,
+--           fold = stripFoldAt, start = stripStartAt }:
+--   P1 -> F straight on out of the crop (the boom on fold.workEnd past P1),
+--   fold at F, the pieces (forwards or backwards), B -> P2 straight into the
+--   next tramline, on in start.ub to unfold, back out to S and away;
 -- or nil if no turn fits.
 function TramlineGenerator.planStripTurn(geo, la, sA, lb, sB, opts)
     local ctx = geo.strip
@@ -542,7 +663,7 @@ function TramlineGenerator.planStripTurn(geo, la, sA, lb, sB, opts)
     local WB = opts.wheelbase or TramlineGenerator.STRIP_WHEELBASE
     local FRONT = opts.front or TramlineGenerator.STRIP_FRONT
     local REAR = opts.rear or TramlineGenerator.STRIP_REAR
-    local fb = opts.foldBack or (TramlineGenerator.STRIP_BOOM_BACK + TramlineGenerator.STRIP_FOLD_EXTRA)
+    local RA = opts.rearAxle or 0
     local lead = TramlineGenerator.STRIP_LEAD
     local dx, dz = geo.dirX, geo.dirZ
     -- end points (where the crop stops) and outward directions
@@ -560,11 +681,10 @@ function TramlineGenerator.planStripTurn(geo, la, sA, lb, sB, opts)
     if sl < 1 then return nil end
     local function W2(x, y) return p1x + vx * x + ux * y, p1z + vz * x + uz * y end
     local yB = y2 + lead
-    -- room to fold: the vehicle's front stays in the field
-    do
-        local fx, fz = W2(0, fb + FRONT)
-        if not stripFree(ctx, fx, fz, "body") then return nil end
-    end
+    -- where it folds: on out until the boom has left the crop (room allowing)
+    local fold = TramlineGenerator.stripFoldAt(geo, p1x, p1z, ux, uz, opts)
+    if fold == nil then return nil end
+    local fb = fold.fb
 
     -- a candidate is a list of moves from (0, fb) facing outwards (phi = 0,
     -- phi grows turning towards the next tramline):
@@ -572,9 +692,10 @@ function TramlineGenerator.planStripTurn(geo, la, sA, lb, sB, opts)
     --   { "A", dir, ang }  arc of radius R, phi growing by ang (forwards: a
     --                      turn towards the next tramline; backwards:
     --                      steering the other way)
-    -- Check it: every STEP the wheels (reference point and front axle) on the
-    -- strip, the ends of the vehicle in the field; on the first and last
-    -- tramline's own line (lined up, in its track) anything goes.
+    -- Check it: every STEP the wheels (reference point, front axle and a rear
+    -- axle behind the point) on the strip, the ends of the vehicle in the
+    -- field; on the first and last tramline's own line (lined up, in its
+    -- track) anything goes.
     local cosA, sinA = math.cos, math.sin
     -- in a tramline's own track (tol: how far off its middle the wheels may be)
     local function onOwnLine(x, y, tol)
@@ -601,6 +722,10 @@ function TramlineGenerator.planStripTurn(geo, la, sA, lb, sB, opts)
         if not onOwnLine(x, y, 0.6) and free(x, y) < 2 then return false end
         local ax, ay = x + sp * WB, y + cp * WB
         if not onOwnLine(ax, ay, 1.0) and free(ax, ay) < 2 then return false end
+        if RA > 0.3 then
+            local bx, by = x - sp * RA, y - cp * RA
+            if not onOwnLine(bx, by, 1.0) and free(bx, by) < 2 then return false end
+        end
         if free(x + sp * FRONT, y + cp * FRONT) < 1 then return false end
         return free(x - sp * REAR, y - cp * REAR) >= 1
     end
@@ -609,7 +734,7 @@ function TramlineGenerator.planStripTurn(geo, la, sA, lb, sB, opts)
         step = step or STEP
         local x, y, phi = 0, fb, 0
         local pieces, cur = {}, nil
-        for _, mv in ipairs(moves) do
+        for mi, mv in ipairs(moves) do
             local kind, dir, amount = mv[1], mv[2], mv[3]
             if amount > 1e-6 then
                 local rev = dir < 0
@@ -633,7 +758,7 @@ function TramlineGenerator.planStripTurn(geo, la, sA, lb, sB, opts)
                         nphi = phi + amount * f
                         nx_, ny_ = cxc - side * R * cosA(nphi), cyc + side * R * sinA(nphi)
                     end
-                    if check and not poseOk(nx_, ny_, nphi) then return nil end
+                    if check and not poseOk(nx_, ny_, nphi) then return nil, mi, amount * f end
                     local wx, wz = W2(nx_, ny_)
                     cur.pts[#cur.pts + 1] = { wx, wz }
                     if j == k then x, y, phi = nx_, ny_, nphi end
@@ -644,7 +769,7 @@ function TramlineGenerator.planStripTurn(geo, la, sA, lb, sB, opts)
     end
 
     -- the candidates, cheapest first (angles every 'stepDeg' from 'offDeg')
-    local function search(stepDeg, offDeg, starts, a2s)
+    local function search(stepDeg, offDeg, starts, a2s, fwdOnly)
     local cands = {}
     local SHIFT = TramlineGenerator.STRIP_SHIFT_COST
     local function addCand(moves)
@@ -655,7 +780,7 @@ function TramlineGenerator.planStripTurn(geo, la, sA, lb, sB, opts)
                 if mv[2] ~= lastDir then shifts = shifts + 1; lastDir = mv[2] end
             end
         end
-        if shifts > 0 and not opts.reverse then return end
+        if shifts > 0 and (fwdOnly or not opts.reverse) then return end
         cands[#cands + 1] = { moves = moves, cost = len + shifts * SHIFT, shifts = shifts }
     end
     local d2r = math.pi / 180
@@ -731,40 +856,98 @@ function TramlineGenerator.planStripTurn(geo, la, sA, lb, sB, opts)
     end
     table.sort(cands, function(p, q) return p.cost < q.cost end)
 
-    -- checked every metre, the one taken again every STEP
+    -- checked every metre, the one taken again every STEP. Candidates
+    -- share their first moves: where a move runs into something, those
+    -- with the same moves before it and that move as long or longer are
+    -- passed over.
     local best = nil
+    local failAt = {}      -- moves before + the move's kind and way -> how far into it it fails
+    local function keyOf(moves, mi)
+        local t = {}
+        for i = 1, mi - 1 do
+            local mv = moves[i]
+            t[#t + 1] = string.format("%s%d%.3f", mv[1], mv[2], mv[3])
+        end
+        t[#t + 1] = moves[mi][1] .. moves[mi][2]
+        return table.concat(t, "|")
+    end
     for _, c in ipairs(cands) do
-        local pieces, x, y = trace(c.moves, true, 1.0)
-        if pieces ~= nil and abs(x - sl) < 0.05 and abs(y - yB) < 0.05 then
-            pieces = trace(c.moves, true)
-            if pieces ~= nil then
-                best = { pieces = pieces, shifts = c.shifts, cost = c.cost }
-                break
+        local skip = false
+        for mi = 2, min(3, #c.moves) do
+            local lim = failAt[keyOf(c.moves, mi)]
+            if lim ~= nil and c.moves[mi][3] >= lim then skip = true; break end
+        end
+        if not skip then
+            local pieces, x, y = trace(c.moves, true, 1.0)
+            if pieces ~= nil and abs(x - sl) < 0.05 and abs(y - yB) < 0.05 then
+                pieces = trace(c.moves, true)
+                if pieces ~= nil then
+                    best = { pieces = pieces, shifts = c.shifts, cost = c.cost }
+                    break
+                end
+            elseif pieces == nil and x ~= nil and x >= 2 and x <= 3 then
+                -- (x, y: the move it failed in, how far into it)
+                local k = keyOf(c.moves, x)
+                if failAt[k] == nil or y < failAt[k] then failAt[k] = y end
             end
         end
     end
     return best
     end
-    -- a coarse search, then a finer one if nothing fits
-    local starts = { fb }
-    if opts.reverse then
-        for _, yr in ipairs({ fb * 0.5, 0 }) do if yr < fb - 0.5 then starts[#starts + 1] = yr end end
-    end
-    local best = search(7.5, 0, starts, { 0 })
-    if best == nil then
-        local more = { fb }
+    -- Where to fold: after the full run out (STRIP_RUN_OUT), or a shorter one
+    -- (the boom still right off the crop: fbLow) where that lets it turn, or
+    -- lets it turn without backing up; where nothing fits at all, as soon as
+    -- the boom has left the crop where the tramline runs (fbMin: not right
+    -- off it at one end). A coarse search first, then a finer one.
+    local bb = boomBackOf(opts)
+    local fbMin = bb + TramlineGenerator.STRIP_FOLD_EXTRA
+    local fbLow = max(fbMin, bb + fold.delta + TramlineGenerator.STRIP_RUN_OUT_MIN)
+    local function startsFrom(y, ys)
+        local list = { y }
         if opts.reverse then
-            for _, yr in ipairs({ fb * 0.75, fb * 0.5, fb * 0.25, 0 }) do if yr < fb - 0.25 then more[#more + 1] = yr end end
+            for _, f in ipairs(ys) do if y * f < y - 0.25 then list[#list + 1] = y * f end end
         end
-        best = search(3.75, 3.75, more, { 0 }) or search(7.5, 0, more, { 0, 15, 30, 45, 60, 75 })
+        return list
+    end
+    local function coarse(fwdOnly) return search(7.5, 0, fwdOnly and { fb } or startsFrom(fb, { 0.5, 0 }), { 0 }, fwdOnly) end
+    local function fine()
+        local more = startsFrom(fb, { 0.75, 0.5, 0.25, 0 })
+        return search(3.75, 3.75, more, { 0 }) or search(7.5, 0, more, { 0, 15, 30, 45, 60, 75 })
+    end
+    -- (fb: the checks and the turns start from it)
+    local function from(y, find, ...)
+        if y > fb - 0.25 then return nil end
+        local was = fb
+        fb = y
+        local r = find(...)
+        if r == nil then fb = was end
+        return r
+    end
+    local best = coarse()
+    if best == nil then best = from(fbLow, coarse) end
+    if best == nil then best = fine() end
+    if best == nil then best = from(fbMin, coarse) end
+    if best ~= nil and best.shifts > 0 then
+        local fwd = from(fbLow, coarse, true)
+        if fwd == nil and fb > fbLow + 0.25 then
+            fwd = from(fbLow, function() return search(3.75, 3.75, { fb }, { 0 }, true) end)
+        end
+        if fwd ~= nil then best = fwd end
+    end
+    if best ~= nil and fb < fold.fb - 0.01 then
+        fold = { fb = fb, workEnd = max(0, fb - bb - 0.3), clear = fb - TramlineGenerator.STRIP_STOP_TOL - bb - fold.delta, delta = fold.delta }
     end
     if best == nil then return nil end
     local len = 0
     for _, pc in ipairs(best.pieces) do len = len + G.polyLength(pc.pts, false) end
     local fx, fz = W2(0, fb)
     local bx, bz = W2(sl, yB)
-    return { P1 = { p1x, p1z }, F = { fx, fz }, B = { bx, bz }, P2 = { p2x, p2z }, pieces = best.pieces,
-             len = len, shifts = best.shifts, foldBack = fb, from = la.id, to = lb.id, side = sA }
+    -- into the next tramline: unfold, back up out of it to the end of the
+    -- turn (or further where the crop starts further out across the boom)
+    local start = TramlineGenerator.stripStartAt(geo, p2x, p2z, ux2, uz2, opts, lead)
+    return { P1 = { p1x, p1z }, F = { fx, fz }, B = { bx, bz }, P2 = { p2x, p2z },
+             S = { p2x + ux2 * (start.yS or 0), p2z + uz2 * (start.yS or 0) }, pieces = best.pieces,
+             len = len, shifts = best.shifts, foldBack = fb, fold = fold, start = start, from = la.id, to = lb.id, side = sA }
 end
 
 -- the same turn when no turn fits: forwards round, inside the field if it
@@ -772,13 +955,18 @@ end
 function TramlineGenerator.forcedStripTurn(geo, la, sA, lb, sB, opts)
     local dx, dz = geo.dirX, geo.dirZ
     local R = (opts and opts.R) or geo.radius or 7
-    local fb = (opts and opts.foldBack) or (TramlineGenerator.STRIP_BOOM_BACK + TramlineGenerator.STRIP_FOLD_EXTRA)
     local function endOf(l, side)
         if side == "A" then return l[1], l[2], -dx, -dz end
         return l[3], l[4], dx, dz
     end
     local p1x, p1z, ux, uz = endOf(la, sA)
-    local p2x, p2z = endOf(lb, sB)
+    local p2x, p2z, ux2, uz2 = endOf(lb, sB)
+    local fold = geo.strip ~= nil and TramlineGenerator.stripFoldAt(geo, p1x, p1z, ux, uz, opts) or nil
+    if fold == nil then
+        local bb = boomBackOf(opts)
+        fold = { fb = bb + TramlineGenerator.STRIP_FOLD_EXTRA, workEnd = 0, clear = TramlineGenerator.STRIP_FOLD_EXTRA, delta = 0 }
+    end
+    local fb = fold.fb
     local fx, fz = p1x + ux * fb, p1z + uz * fb
     local bx, bz = p2x + ux * TramlineGenerator.STRIP_LEAD, p2z + uz * TramlineGenerator.STRIP_LEAD
     local ctx = geo.strip
@@ -793,8 +981,10 @@ function TramlineGenerator.forcedStripTurn(geo, la, sA, lb, sB, opts)
     if path == nil then path = G.dubins(fx, fz, G.atan2(uz, ux), bx, bz, G.atan2(-uz, -ux), R) end
     if path == nil then return nil end
     local pts = G.dubinsPoints(path, TramlineGenerator.STRIP_STEP)
-    return { P1 = { p1x, p1z }, F = { fx, fz }, B = { bx, bz }, P2 = { p2x, p2z }, pieces = { { pts = pts, rev = false } },
-             len = path.length, shifts = 0, foldBack = fb, from = la.id, to = lb.id, side = sA, forced = true }
+    local start = TramlineGenerator.stripStartAt(geo, p2x, p2z, ux2, uz2, opts, TramlineGenerator.STRIP_LEAD)
+    return { P1 = { p1x, p1z }, F = { fx, fz }, B = { bx, bz }, P2 = { p2x, p2z },
+             S = { p2x + ux2 * (start.yS or 0), p2z + uz2 * (start.yS or 0) }, pieces = { { pts = pts, rev = false } },
+             len = path.length, shifts = 0, foldBack = fb, fold = fold, start = start, from = la.id, to = lb.id, side = sA, forced = true }
 end
 
 -- The turn the worker drives from line 'from' (side) to line 'to' for a
@@ -803,8 +993,8 @@ end
 function TramlineGenerator.stripTurnFor(geo, fromId, toId, side, opts)
     geo.stripTurns = geo.stripTurns or {}
     local function f(v) return v ~= nil and string.format("%.1f", v) or "-" end
-    local key = string.format("%d>%d%s/%s/%s/%s/%s/%s", fromId, toId, side, f(opts.foldBack), f(opts.wheelbase), f(opts.front),
-        f(opts.rear), tostring(opts.reverse ~= false))
+    local key = string.format("%d>%d%s/%s/%s/%s/%s/%s/%s", fromId, toId, side, f(opts.foldBack), f(opts.wheelbase), f(opts.front),
+        f(opts.rear), tostring(opts.reverse ~= false), f(opts.rearAxle))
     local t = geo.stripTurns[key]
     if t == nil then
         local la, lb = geo.lines[fromId], geo.lines[toId]
@@ -1118,7 +1308,7 @@ function TramlineGenerator.generate(set, info)
         return TramlineGenerator.dirSense(inner[ri or 1], dir)
     end
     local loopsUsed, ringUsed, forcedUsed, bothWays = 0, 0, 0, 0
-    local stripUsed, stripForced, stripShifts, stripBack = 0, 0, 0, 0
+    local stripUsed, stripForced, stripShifts, stripBack, stripShort = 0, 0, 0, 0, 0
     local stripOpts = set.stripVehicle or { foldBack = TramlineGenerator.STRIP_BOOM_BACK + TramlineGenerator.STRIP_FOLD_EXTRA, reverse = true }
     for _, blk in ipairs(geo.blocks) do
         blk.conns = {}
@@ -1133,12 +1323,14 @@ function TramlineGenerator.generate(set, info)
                 conn = { kind = "strip", from = la.id, to = lb.id, side = side, turn = turn }
                 if turn ~= nil then
                     if turn.forced then stripForced = stripForced + 1 else stripUsed = stripUsed + 1 end
+                    if not turn.forced and turn.fold.clear < -0.05 then stripShort = stripShort + 1 end
                     stripShifts = stripShifts + (turn.shifts or 0)
                     if (turn.shifts or 0) > 0 then stripBack = stripBack + 1 end
                     -- drawn (not cut into the ground: the strip is bare soil anyway)
                     segmentsOf({ turn.P1, turn.F }, false, geo.extras)
                     for _, pc in ipairs(turn.pieces) do segmentsOf(pc.pts, false, geo.extras) end
                     segmentsOf({ turn.B, turn.P2 }, false, geo.extras)
+                    if (turn.start.yS or 0) > TramlineGenerator.STRIP_LEAD + 0.05 then segmentsOf({ turn.S, turn.B }, false, geo.extras) end
                 end
             elseif style == 2 then
                 conn = loopTurn(la, lb, side) or ringTurn(la, lb, side)
@@ -1214,10 +1406,18 @@ function TramlineGenerator.generate(set, info)
             end
         end
         if W ~= nil and blk.ends[2] ~= nil then
-            -- soil strip: out of the crop at the end of the part (until the boom has left it)
+            -- soil strip: out of the crop at the end of the part (until the
+            -- boom has left it), and backing out of the first tramline to start
             local E = blk.ends[2]
-            local fb = stripOpts.foldBack or (TramlineGenerator.STRIP_BOOM_BACK + TramlineGenerator.STRIP_FOLD_EXTRA)
+            local fold = TramlineGenerator.stripFoldAt(geo, E.x, E.z, E.ux, E.uz, stripOpts)
+            local fb = fold ~= nil and fold.fb or (boomBackOf(stripOpts) + TramlineGenerator.STRIP_FOLD_EXTRA)
+            if fold == nil or fold.clear < -0.05 then stripShort = stripShort + 1 end
             segmentsOf({ { E.x, E.z }, { E.x + E.ux * fb, E.z + E.uz * fb } }, false, geo.extras)
+            local E1 = blk.ends[1]
+            local start = TramlineGenerator.stripStartAt(geo, E1.x, E1.z, E1.ux, E1.uz, stripOpts, TramlineGenerator.STRIP_LEAD)
+            if (start.yS or 0) > 0.3 then
+                segmentsOf({ { E1.x, E1.z }, { E1.x + E1.ux * start.yS, E1.z + E1.uz * start.yS } }, false, geo.extras)
+            end
         end
     end
 
@@ -1274,7 +1474,12 @@ function TramlineGenerator.generate(set, info)
     if W ~= nil and #geo.blocks > 1 then
         geo.warnings[#geo.warnings + 1] = string.format("the field splits into %d parts - between them the worker drives over the crop (folded)", #geo.blocks)
     end
+    if stripShort > 0 then
+        geo.warnings[#geo.warnings + 1] = string.format("%d tramline end(s): no room on the soil strip to drive the whole boom off the crop before folding (where the end of the field is at an angle, or meets a side)",
+            stripShort)
+    end
     geo.stripTurnCount, geo.stripForcedCount, geo.stripShiftCount, geo.stripBackCount = stripUsed, stripForced, stripShifts, stripBack
+    geo.stripShortCount = stripShort
     if bothWays > 0 then
         geo.warnings[#geo.warnings + 1] = string.format("%d of %d part(s) of the field have no room to turn on and off the headland only %s - the worker can turn either way there",
             bothWays, #geo.blocks, dir == "cw" and "clockwise" or "anticlockwise")
@@ -1283,6 +1488,7 @@ function TramlineGenerator.generate(set, info)
     TramlineLog.info("[TramlinePilot] field %d: %d tramlines in %d block(s), %d headland ring(s), %d loop turns, %d headland turns%s%s",
         set.fieldId or -1, #geo.lines, #geo.blocks, H, loopsUsed, ringUsed,
         dir ~= nil and string.format(", headland %s", dir) or "",
-        W ~= nil and string.format(", soil strip %g m: %d turns on it (%d stops to back up), %d that don't fit", W, stripUsed, stripShifts, stripForced) or "")
+        W ~= nil and string.format(", soil strip %g m: %d turns on it (%d stops to back up), %d that don't fit, %d end(s) with no room to get the boom right off the crop",
+            W, stripUsed, stripShifts, stripForced, stripShort) or "")
     return geo
 end

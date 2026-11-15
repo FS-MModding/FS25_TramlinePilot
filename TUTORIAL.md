@@ -42,7 +42,9 @@ For potatoes, onions and other crops grown right to the end of the field, with n
 3. With Create tramlines in crop on, the crop on the strip is cleared as well, so it is bare soil to turn on.
 4. Drive to the start of the first tramline (the green flag) and press Alt+T.
 
-At the end of each tramline the worker drives on until the boom has left the crop, folds it, turns round on the strip and unfolds lined up with the next tramline, the boom just over the edge of the crop. Where the strip is too narrow to turn round in one go, it does a three-point turn. Self-propelled and mounted sprayers can back up; a trailed sprayer turns forwards only, so it needs a wider strip.
+At the end of each tramline the boom stays on until all of it is past the crop. The worker drives about 2 m further onto the strip and folds there. It turns round on the strip, drives into the next tramline until the boom is over the edge of the crop and unfolds. Then it backs out onto the strip to where its turn finished and sprays forwards from there. That way the crop at the ends is sprayed right to the edge, even where the end of the field is at an angle to the tramlines.
+
+Where the strip is too narrow to turn round in one go, it does a three-point turn. Self-propelled and mounted sprayers can back up. A trailed sprayer turns forwards only, so it needs a wider strip; it unfolds where the boom is just short of the crop and sprays on from there.
 
 The tramlines stop where the strip begins. Along the sides of the field the crop goes right to the edge.
 
@@ -125,6 +127,7 @@ The tramlines stop where the strip begins. Along the sides of the field the crop
 - **It can't follow the corners:** set Turn radius to your machine's turning circle.
 - **Gaps in the wheel tracks:** press Generate again with Create tramlines in crop set to Wheel tracks.
 - **Turns don't fit on the soil strip:** the menu says how many. Make the strip wider (in the menu and when you plant), or the turn radius smaller. Generate again sitting in the sprayer you will use. A tramline that runs into a side of the field where it tapers has no strip to turn on at that end.
+- **The boom folds while part of it is still over the crop:** the menu says at how many tramline ends there is no room to drive the whole boom off the crop. That happens where the end of the field is at an angle to the tramlines, or meets a side of the field. Make the strip wider, or pick a Direction that runs the tramlines more square to the ends.
 - **Joined fields are planned separately:** the fields must be on land your farm owns, and the land between them must be field ground all the way across (ploughed or cultivated, not grass). Contract fields are planned as the map has them. Generate the layout again after joining them.
 - **The headland goes round a line across the field:** on maps where two fields were joined by taking out a hedge or wall, the ground where it stood isn't field. Tramline Pilot plans straight over a strip like that (up to about 8 m wide) when nothing stands in it, but keeps going round it if a hedge, wall, fence or trees are still there.
 

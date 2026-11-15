@@ -30,7 +30,7 @@ TramlineDriver.UNFOLD_TIMEOUT  = 30000  -- ms
 TramlineDriver.FOLD_TIMEOUT    = 30000  -- ms (folding to turn on a soil strip)
 TramlineDriver.LOWER_TIMEOUT   = 10000  -- ms crawling while the implements lower
 TramlineDriver.SWITCH_LEAD     = 2.5    -- m: start the line this far before the boom reaches it
-TramlineDriver.REVERSE_SPEED   = 4      -- km/h backing into a headland corner
+TramlineDriver.REVERSE_SPEED   = 4      -- km/h backing up (into a headland corner, on a soil strip)
 
 -- (TramlineGeom is looked up when used: this file may be loaded before it)
 
@@ -361,23 +361,26 @@ function TramlineDriver.canReverse(vehicle)
 end
 
 -- The machine as the turns on a soil strip see it, from the point it steers
--- by: its front axle, its front and back ends, how far on from the edge of
--- the crop it folds (the boom has left it) and whether it can back up. Any
--- part that can't be measured is left to the defaults.
+-- by: its front axle, a rear axle behind the point (a machine that steers
+-- from its middle), its front and back ends, how far behind the boom is
+-- (foldBack: that + STRIP_FOLD_EXTRA) and whether it can back up. Any part
+-- that can't be measured is left to the defaults.
 function TramlineDriver.stripDims(vehicle)
     local steer = TramlineDriver.getSteeringNode(vehicle)
     local d = { reverse = TramlineDriver.canReverse(vehicle) }
     pcall(function()
-        local zmax = nil
+        local zmax, zmin = nil, nil
         local spec = vehicle.spec_wheels
         for _, wheel in pairs(spec ~= nil and spec.wheels or {}) do
             local ph = wheel.physics
             if ph ~= nil and wheel.node ~= nil and ph.positionX ~= nil then
                 local _, _, z = localToLocal(wheel.node, steer, ph.positionX, ph.positionY or 0, ph.positionZ or 0)
                 if z ~= nil and (zmax == nil or z > zmax) then zmax = z end
+                if z ~= nil and (zmin == nil or z < zmin) then zmin = z end
             end
         end
         if zmax ~= nil and zmax > 1 and zmax < 10 then d.wheelbase = zmax end
+        if zmin ~= nil and zmin < -0.5 and zmin > -10 then d.rearAxle = -zmin end
     end)
     pcall(function()
         local front, back = nil, nil
@@ -1321,7 +1324,12 @@ function TramlineDriver:updateDriving(dt)
     end
     if (ppc.reversing == true) ~= (spec.wasReversing == true) then
         spec.wasReversing = ppc.reversing == true
-        TramlineLog.info("[TramlinePilot][drv] %s at waypoint %d", spec.wasReversing and "backing into a headland corner" or "driving on", ppc.relevantIx)
+        local wp = route[ppc.currentIx]
+        local what = "driving on"
+        if spec.wasReversing then
+            what = (wp ~= nil and wp.kind == "strip") and "backing up on the soil strip" or "backing into a headland corner"
+        end
+        TramlineLog.info("[TramlinePilot][drv] %s at waypoint %d", what, ppc.relevantIx)
     end
 
     -- how far the job has got (kept in the store, saved with the savegame)

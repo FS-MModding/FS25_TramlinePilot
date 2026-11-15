@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8" standalone="no"?>
 <modDesc descVersion="116">
     <author>MModding</author>
-    <version>1.2.0.0</version>
+    <version>1.2.0.1</version>
     <title>
         <en>Tramline Pilot</en>
     </title>
@@ -13,7 +13,7 @@ PLAN YOUR TRAMLINES
 - Joined fields: fields of yours joined by ploughing the land between them are planned as one field, with one headland round the lot.
 - Direction: along the longest edge, your vehicle heading, A-B points (Alt+1 / Alt+2), any angle, or as stored.
 - Spacing 6-60 m (your boom or spreading width), 0-4 headland passes, turn radius, worker turns, headland corners, when to do the headland, work and turn speed.
-- Soil strip: for crops grown to the end of the field (potatoes, onions), no headland tramline and a strip of bare soil at the ends. The worker folds its boom, turns round on the soil (with a three-point turn where it is tight) and unfolds for the next tramline.
+- Soil strip: for crops grown to the end of the field (potatoes, onions), no headland tramline and a strip of bare soil at the ends. The worker sprays until the whole boom is off the crop, folds, turns round on the soil (with a three-point turn where it is tight), unfolds in the next tramline and backs out onto the strip to spray it from the very end.
 - Headland direction: as the vehicle faces, or clockwise / anticlockwise - then the worker goes round the headland that way, turns off the headland into the tramlines and back onto it only that way (one curve each instead of two) and backs into each corner from one side (one corner tramline instead of two). The tramlines are still done up and down.
 - Headland tramlines follow the field edge with rounded corners; the main tramlines end on the inner headland tramline.
 - Create tramlines in crop: make the wheel tracks (or a full lane) in the crop straight away. Set the wheel track width (1.50-4.00 m) to match your sprayer; the width of the machine you sit in is marked in the list.
