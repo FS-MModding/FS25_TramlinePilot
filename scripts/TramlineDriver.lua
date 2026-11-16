@@ -1392,8 +1392,7 @@ function TramlineDriver:updateDriving(dt)
         or TramlineRoute.workAt(route, ppc.currentIx, dx + hx * m.back, dz + hz * m.back, lo, hi))
     self:tramlineDriverSetWorking(work)
 
-    local workSpeed = g_tramlineSystem.store.workSpeed or TramlineDriver.WORK_SPEED
-    local turnSpeed = g_tramlineSystem.store.turnSpeed or TramlineDriver.TURN_SPEED
+    local workSpeed, turnSpeed = g_tramlineSystem.store:speedsOf(spec.fieldId)
     local wp = route[ppc.currentIx] or route[#route]
     local maxSpeed = workSpeed
     if wp.turn or curvatureAhead(route, ppc.currentIx, 12) > math.rad(25) then

@@ -105,6 +105,7 @@ function TramlineMenu:open()
     if existing ~= nil then
         for k, v in pairs(existing) do set[k] = v end
     end
+    sys.store:ownSpeeds(set)            -- (a new field: the speeds set last)
     self.state = {
         info = info,
         set = set,

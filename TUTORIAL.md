@@ -23,7 +23,7 @@
 - **Turn radius:** your machine's turning circle (4-15 m).
 - **Headland corners:** round, or back into corners (self-propelled sprayers, mounted sprayers and spinners).
 - **Spray headland:** first, last or skip.
-- **Work speed / Turn speed:** for spraying or spreading, and for turns.
+- **Work speed / Turn speed:** for spraying or spreading, and for turns. Each field keeps its own, and a change counts straight away, without generating again. A new field starts with the speeds you set last.
 - **Refill with AutoDrive:** on or off.
 - **Create tramlines in crop:** no, wheel tracks or a full lane.
 - **Wheel track width:** the distance between your sprayer's wheel centres (1.50-4.00 m). The width of the machine you are sitting in is marked "your vehicle".

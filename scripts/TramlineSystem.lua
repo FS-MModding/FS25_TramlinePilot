@@ -62,14 +62,15 @@ end
 function TramlineSystem.describeSet(set)
     if set == nil then return "none" end
     local dir = math.deg(math.atan2(set.dx or 0, -(set.dz or 1))) % 360
+    local speeds = string.format("work speed %s km/h, turn speed %s km/h", tostring(set.workSpeed or "-"), tostring(set.turnSpeed or "-"))
     if (set.strip or 0) > 0 then
-        return string.format("spacing %g m, direction %.0f deg, soil strip %g m at the ends (no headland tramline), turn radius %g m, wheel track %.2f m",
-            set.spacing or 0, dir, set.strip, set.turnRadius or 0, set.trackWidth or 2)
+        return string.format("spacing %g m, direction %.0f deg, soil strip %g m at the ends (no headland tramline), turn radius %g m, wheel track %.2f m, %s",
+            set.spacing or 0, dir, set.strip, set.turnRadius or 0, set.trackWidth or 2, speeds)
     end
-    return string.format("spacing %g m, direction %.0f deg, %d headland pass(es) done %s going %s, corners %s, turns %s, turn radius %g m, wheel track %.2f m, AutoDrive refill %s",
+    return string.format("spacing %g m, direction %.0f deg, %d headland pass(es) done %s going %s, corners %s, turns %s, turn radius %g m, wheel track %.2f m, AutoDrive refill %s, %s",
         set.spacing or 0, dir, set.headlands or 0, tostring(set.headlandOrder or "first"), tostring(set.headlandDir or "either"), tostring(set.corners or "round"),
         (set.turnStyle == 2) and "loops" or "along the headland", set.turnRadius or 0, set.trackWidth or 2,
-        set.refillAD and "on" or "off")
+        set.refillAD and "on" or "off", speeds)
 end
 
 -- the same, longer on screen and also in the game's notification list
@@ -620,7 +621,7 @@ function TramlineSystem:cmdReport()
         add("vehicle: %s", TramlineDriver.describeVehicle(v))
         add("worker: %s", TramlineDriver.describeState(v))
     end
-    add("work speed %s km/h, turn speed %s km/h, lines %s, PF tramlines %s", tostring(self.store.workSpeed),
+    add("new fields start at work speed %s km/h, turn speed %s km/h; lines %s, PF tramlines %s", tostring(self.store.workSpeed),
         tostring(self.store.turnSpeed), tostring(self.store.showMode), tostring(self.store.pfMode))
     add("====================")
     for _, l in ipairs(lines) do TramlineLog.write("INFO", l) end

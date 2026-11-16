@@ -18,7 +18,7 @@ TramlineLibrary = {}
 TramlineLibrary.MOD_FOLDER = "FS25_TramlinePilot"
 
 -- set fields kept in a wheeling, by type
-TramlineLibrary.FLOATS  = { "ax", "az", "dx", "dz", "offset", "spacing", "turnRadius", "refX", "refZ", "trackWidth", "strip" }
+TramlineLibrary.FLOATS  = { "ax", "az", "dx", "dz", "offset", "spacing", "turnRadius", "refX", "refZ", "trackWidth", "strip", "workSpeed", "turnSpeed" }
 TramlineLibrary.INTS    = { "headlands", "turnStyle" }
 TramlineLibrary.STRINGS = { "headlandOrder", "corners", "headlandDir" }
 TramlineLibrary.BOOLS   = { "anchorToEdge", "refillAD" }

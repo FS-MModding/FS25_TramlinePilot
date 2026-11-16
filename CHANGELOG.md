@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.0.2 (16 November 2026)
+
+### Fixes
+
+- Work speed and turn speed are now kept for each field. Before, setting them on one field set them for every field ([issue #2](https://github.com/FS-MModding/FS25_TramlinePilot/issues/2)).
+  - They count straight away, without generating the layout again.
+  - A new field starts with the speeds you set last.
+  - Saved wheelings keep the speeds too.
+  - In a savegame from an earlier version, every field keeps the speeds you had set.
+
 ## 1.2.0.1 (15 November 2026)
 
 ### Changes

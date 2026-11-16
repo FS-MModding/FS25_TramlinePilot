@@ -153,11 +153,7 @@ function TramlineDialog:onOpen()
     self.refillOption:setDisabled(TramlineAD.get() == nil)
 
     self.workSpeedOption:setTexts(buildSpeeds(TramlineDialog.WORK_SPEED_MIN, TramlineDialog.WORK_SPEED_MAX))
-    self.workSpeedOption:setState(math.max(1, math.min(TramlineDialog.WORK_SPEED_MAX - TramlineDialog.WORK_SPEED_MIN + 1,
-        math.floor((sys.store.workSpeed or 12) + 0.5) - TramlineDialog.WORK_SPEED_MIN + 1)))
     self.turnSpeedOption:setTexts(buildSpeeds(TramlineDialog.TURN_SPEED_MIN, TramlineDialog.TURN_SPEED_MAX))
-    self.turnSpeedOption:setState(math.max(1, math.min(TramlineDialog.TURN_SPEED_MAX - TramlineDialog.TURN_SPEED_MIN + 1,
-        math.floor((sys.store.turnSpeed or 7) + 0.5) - TramlineDialog.TURN_SPEED_MIN + 1)))
 
     self.paintOption:setTexts(TramlineDialog.PAINTS)
     self.paintOption:setState(st.paintMode or 1)
@@ -197,6 +193,12 @@ function TramlineDialog:syncRows()
     for i, k in ipairs(TramlineDialog.HEADLAND_DIR_KEYS) do if k == set.headlandDir then di = i end end
     self.headlandDirOption:setState(di)
     self.refillOption:setState(set.refillAD and 2 or 1)
+    -- this field's speeds
+    local store = self.system.store
+    self.workSpeedOption:setState(math.max(1, math.min(TramlineDialog.WORK_SPEED_MAX - TramlineDialog.WORK_SPEED_MIN + 1,
+        math.floor((set.workSpeed or store.workSpeed or 12) + 0.5) - TramlineDialog.WORK_SPEED_MIN + 1)))
+    self.turnSpeedOption:setState(math.max(1, math.min(TramlineDialog.TURN_SPEED_MAX - TramlineDialog.TURN_SPEED_MIN + 1,
+        math.floor((set.turnSpeed or store.turnSpeed or 7) + 0.5) - TramlineDialog.TURN_SPEED_MIN + 1)))
     self:syncHeadlandRows()
     self.trackOption:setState(trackIndex(set.trackWidth))
     self:updatePreview()
@@ -496,13 +498,23 @@ function TramlineDialog:onClickHeadlandDir(state)
     self.state.set.headlandDir = TramlineDialog.HEADLAND_DIR_KEYS[state] or "either"
     self:updatePreview()
 end
+-- The speeds are this field's: they count straight away (no need to
+-- generate again) if the field has a layout, and a new field starts with
+-- the speeds set last.
+local function setSpeed(self, key, value)
+    local st = self.state
+    local store = self.system.store
+    st.set[key] = value
+    local stored = store:getSet(st.info.fieldId)
+    if stored ~= nil then stored[key] = value end
+    store[key] = value
+    store.isDirty = true
+end
 function TramlineDialog:onClickWorkSpeed(state)
-    self.system.store.workSpeed = state + TramlineDialog.WORK_SPEED_MIN - 1
-    self.system.store.isDirty = true
+    setSpeed(self, "workSpeed", state + TramlineDialog.WORK_SPEED_MIN - 1)
 end
 function TramlineDialog:onClickTurnSpeed(state)
-    self.system.store.turnSpeed = state + TramlineDialog.TURN_SPEED_MIN - 1
-    self.system.store.isDirty = true
+    setSpeed(self, "turnSpeed", state + TramlineDialog.TURN_SPEED_MIN - 1)
 end
 function TramlineDialog:onClickTurn(state)     self.state.set.turnStyle = state; self:updatePreview() end
 function TramlineDialog:onClickRadius(state)

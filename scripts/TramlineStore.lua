@@ -91,9 +91,25 @@ function TramlineStore:putSet(fieldId, values)
     local set = self.sets[fieldId] or TramlineStore.newSet(fieldId)
     for k, v in pairs(values) do set[k] = v end
     set.fieldId = fieldId
+    self:ownSpeeds(set)
     self.sets[fieldId] = set
     self.isDirty = true
     return set
+end
+
+-- Work and turn speed are kept per field. A field without its own yet (a
+-- new one, or one from a savegame before 1.2.0.2) starts with the speeds
+-- set last (workSpeed / turnSpeed of the store).
+function TramlineStore:ownSpeeds(set)
+    if set.workSpeed == nil then set.workSpeed = self.workSpeed or 12 end
+    if set.turnSpeed == nil then set.turnSpeed = self.turnSpeed or 7 end
+    return set
+end
+
+-- the speeds the worker drives at on a field (km/h)
+function TramlineStore:speedsOf(fieldId)
+    local set = fieldId ~= nil and self.sets[fieldId] or nil
+    return (set and set.workSpeed) or self.workSpeed or 12, (set and set.turnSpeed) or self.turnSpeed or 7
 end
 
 function TramlineStore:getOrCreateSet(fieldId)
@@ -113,6 +129,7 @@ function TramlineStore:getOrCreateSet(fieldId)
             headlandDir = "either",
             strip = 0,
         }
+        self:ownSpeeds(set)
         self.sets[fieldId] = set
     end
     return set
@@ -257,6 +274,7 @@ function TramlineStore:save()
     xmlFile:setBool("tramlines.settings#disablePFTramlines", (TramlinePFCompat.mode or 1) == 3)
     xmlFile:setBool("tramlines.settings#pfAsked", self.pfAsked == true)
     xmlFile:setInt("tramlines.settings#showMode", self.showMode or 2)
+    -- (the speeds set last: what a new field starts with)
     xmlFile:setFloat("tramlines.settings#workSpeed", self.workSpeed or 12)
     xmlFile:setFloat("tramlines.settings#turnSpeed", self.turnSpeed or 7)
 
@@ -281,6 +299,8 @@ function TramlineStore:save()
         xmlFile:setString(key .. "#headlandDir", set.headlandDir or "either")
         xmlFile:setFloat(key .. "#strip", set.strip or 0)
         if set.stripVehicle ~= nil then xmlFile:setString(key .. "#stripVehicle", TramlineRoute.stripKey(set.stripVehicle)) end
+        if set.workSpeed ~= nil then xmlFile:setFloat(key .. "#workSpeed", set.workSpeed) end
+        if set.turnSpeed ~= nil then xmlFile:setFloat(key .. "#turnSpeed", set.turnSpeed) end
         if set.refX ~= nil then
             xmlFile:setFloat(key .. "#refX", set.refX)
             xmlFile:setFloat(key .. "#refZ", set.refZ)
@@ -367,7 +387,11 @@ function TramlineStore:load()
                 stripVehicle = TramlineStore.stripVehicleOf(xmlFile:getString(key .. "#stripVehicle")),
                 refX = xmlFile:getFloat(key .. "#refX"),
                 refZ = xmlFile:getFloat(key .. "#refZ"),
+                workSpeed = xmlFile:getFloat(key .. "#workSpeed"),
+                turnSpeed = xmlFile:getFloat(key .. "#turnSpeed"),
             }
+            -- (before 1.2.0.2 the speeds were the same for every field)
+            self:ownSpeeds(self.sets[fieldId])
             local jk = key .. ".job"
             local n = xmlFile:getInt(jk .. "#n")
             if n ~= nil then
