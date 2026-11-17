@@ -653,7 +653,7 @@ end
 --   fold at F, the pieces (forwards or backwards), B -> P2 straight into the
 --   next tramline, on in start.ub to unfold, back out to S and away;
 -- or nil if no turn fits.
-function TramlineGenerator.planStripTurn(geo, la, sA, lb, sB, opts)
+function TramlineGenerator.planStripTurn(geo, la, sA, lb, sB, opts, hints, quick)
     local ctx = geo.strip
     if ctx == nil then return nil end
     opts = opts or {}
@@ -730,7 +730,9 @@ function TramlineGenerator.planStripTurn(geo, la, sA, lb, sB, opts)
         return free(x - sp * REAR, y - cp * REAR) >= 1
     end
     -- walk the moves; returns pieces (split where the direction changes) or nil
-    local function trace(moves, check, step)
+    -- (sparse: a first look - straights checked only every 4 m; they run
+    -- along the strip, and the turns at their ends are what fail)
+    local function trace(moves, check, step, sparse)
         step = step or STEP
         local x, y, phi = 0, fb, 0
         local pieces, cur = {}, nil
@@ -743,7 +745,7 @@ function TramlineGenerator.planStripTurn(geo, la, sA, lb, sB, opts)
                     pieces[#pieces + 1] = cur
                 end
                 local len = (kind == "S") and amount or amount * R
-                local k = max(1, ceil(len / step))
+                local k = max(1, ceil(len / ((sparse and kind == "S") and max(step, 4) or step)))
                 local cxc, cyc, side
                 if kind == "A" then
                     side = dir    -- forwards: centre on the turning side; backwards: the other
@@ -768,24 +770,6 @@ function TramlineGenerator.planStripTurn(geo, la, sA, lb, sB, opts)
         return pieces, x, y, phi
     end
 
-    -- the candidates, cheapest first (angles every 'stepDeg' from 'offDeg')
-    local function search(stepDeg, offDeg, starts, a2s, fwdOnly)
-    local cands = {}
-    local SHIFT = TramlineGenerator.STRIP_SHIFT_COST
-    local function addCand(moves)
-        local len, shifts, lastDir = 0, 0, 1
-        for _, mv in ipairs(moves) do
-            if mv[3] > 1e-6 then
-                len = len + ((mv[1] == "S") and mv[3] or mv[3] * R) * ((mv[2] < 0) and 1.3 or 1)
-                if mv[2] ~= lastDir then shifts = shifts + 1; lastDir = mv[2] end
-            end
-        end
-        if shifts > 0 and (fwdOnly or not opts.reverse) then return end
-        cands[#cands + 1] = { moves = moves, cost = len + shifts * SHIFT, shifts = shifts }
-    end
-    local d2r = math.pi / 180
-    -- back up first (down the tramline, as far as the crop edge or a little
-    -- into the track) for more room, or not
     -- Two shapes, each: back up (or not), forward arc al towards the next
     -- tramline, backward arc be (the back swinging out), forward arc into the
     -- next tramline, and one straight to make it end on it:
@@ -794,9 +778,73 @@ function TramlineGenerator.planStripTurn(geo, la, sA, lb, sB, opts)
     --   2. the straight after the first arc (out round, along the strip, then
     --      back the rear round and forwards into it); with a2: round towards
     --      the crop a2 first, then back round (coming at it from this side)
-    local maxStraight = 3 * W + sl
+    -- Their moves from a start yr (backed up to it from fb) and the angles;
+    -- nil where they don't come out at the next tramline.
+    local maxStraight = 3 * W + sl + abs(y2)      -- (along a strip at an angle the straight is longer)
+    local d2r = math.pi / 180
+    local function shape1(yr, al, be)
+        local p2 = al + be
+        if not (p2 > 2 * d2r and p2 < 178 * d2r) then return nil end
+        local ca, sa, c2, s2 = cosA(al), sinA(al), cosA(p2), sinA(p2)
+        local x, y = R - R * ca, yr + R * sa                 -- after the forward arc
+        x, y = x - R * ca + R * c2, y + R * sa - R * s2       -- after the backward arc
+        local bb = (x + R * c2 + R - sl) / s2                -- straight: backwards if > 0
+        if abs(bb) > maxStraight then return nil end
+        local c = y - bb * c2 - R * s2 - yB
+        if c < -1e-6 then return nil end
+        local moves = { { "S", -1, fb - yr }, { "A", 1, al }, { "A", -1, be } }
+        if bb >= 0 then moves[#moves + 1] = { "S", -1, bb } else moves[#moves + 1] = { "S", 1, -bb } end
+        moves[#moves + 1] = { "A", 1, math.pi - p2 }
+        moves[#moves + 1] = { "S", 1, max(0, c) }
+        return moves
+    end
+    local function shape2(yr, al, be, a2)
+        local p2 = al + be
+        local ca, sa = cosA(al), sinA(al)
+        if not (p2 > 2 * d2r and p2 < 178 * d2r) or be <= 0 or sa <= 0.05 then return nil end
+        local pa, pb = al + a2, p2 + a2                      -- heading before / after backing round
+        if pb >= 177 * d2r then return nil end
+        local cpa, spa, cpb, spb = cosA(pa), sinA(pa), cosA(pb), sinA(pb)
+        local f = (sl - 2 * R + 2 * R * cpa - 2 * R * cpb) / sa   -- straight: forwards if > 0
+        if abs(f) > maxStraight then return nil end
+        local c = yr + f * ca + 2 * R * spa - 2 * R * spb - yB
+        if c < -1e-6 then return nil end
+        local moves = { { "S", -1, fb - yr }, { "A", 1, al } }
+        if f >= 0 then moves[#moves + 1] = { "S", 1, f } else moves[#moves + 1] = { "S", -1, -f } end
+        moves[#moves + 1] = { "A", 1, a2 }
+        moves[#moves + 1] = { "A", -1, be }
+        moves[#moves + 1] = { "A", 1, math.pi - pb }
+        moves[#moves + 1] = { "S", 1, max(0, c) }
+        return moves
+    end
+    local SHIFT = TramlineGenerator.STRIP_SHIFT_COST
+    local function costOf(moves)
+        local len, shifts, lastDir = 0, 0, 1
+        for _, mv in ipairs(moves) do
+            if mv[3] > 1e-6 then
+                len = len + ((mv[1] == "S") and mv[3] or mv[3] * R) * ((mv[2] < 0) and 1.3 or 1)
+                if mv[2] ~= lastDir then shifts = shifts + 1; lastDir = mv[2] end
+            end
+        end
+        return len + shifts * SHIFT, shifts
+    end
+    -- the shape a turn took, to try first for others like it (hints)
+    local function shapeOf(prm)
+        return { s = prm[1], yr = prm[2], al = prm[3], be = prm[4], a2 = prm[5], noBack = prm[2] >= fb - 1e-6, fb = fb }
+    end
+
+    -- the candidates, cheapest first (angles every 'stepDeg' from 'offDeg')
+    local function search(stepDeg, offDeg, starts, a2s, fwdOnly)
+    local cands = {}
+    local function addCand(moves, prm)
+        if moves == nil then return end
+        local cost, shifts = costOf(moves)
+        if shifts > 0 and (fwdOnly or not opts.reverse) then return end
+        cands[#cands + 1] = { moves = moves, cost = cost, shifts = shifts, prm = prm }
+    end
+    -- back up first (down the tramline, as far as the crop edge or a little
+    -- into the track) for more room, or not
     for _, yr in ipairs(starts) do
-        local back = fb - yr
         -- the angles on the grid, and the way straight at the next tramline
         -- (along a strip that runs off at an angle)
         local alphas = {}
@@ -808,47 +856,11 @@ function TramlineGenerator.planStripTurn(geo, la, sA, lb, sB, opts)
         for _, a in ipairs(alphas) do
             for b = 0, 177 - a, stepDeg do
                 local al, be = a * d2r, b * d2r
-                local p2 = al + be
-                if p2 > 2 * d2r and p2 < 178 * d2r then
-                    local ca, sa, c2, s2 = cosA(al), sinA(al), cosA(p2), sinA(p2)
-                    -- 1.
-                    local x, y = R - R * ca, yr + R * sa                 -- after the forward arc
-                    x, y = x - R * ca + R * c2, y + R * sa - R * s2       -- after the backward arc
-                    local bb = (x + R * c2 + R - sl) / s2                -- straight: backwards if > 0
-                    if abs(bb) <= maxStraight then
-                        local y6 = y - bb * c2 - R * s2
-                        local c = y6 - yB
-                        if c >= -1e-6 then
-                            local moves = { { "S", -1, back }, { "A", 1, al }, { "A", -1, be } }
-                            if bb >= 0 then moves[#moves + 1] = { "S", -1, bb } else moves[#moves + 1] = { "S", 1, -bb } end
-                            moves[#moves + 1] = { "A", 1, math.pi - p2 }
-                            moves[#moves + 1] = { "S", 1, max(0, c) }
-                            addCand(moves)
-                        end
-                    end
-                    -- 2.
-                    if b > 0 and sa > 0.05 then
-                        for _, a2d in ipairs(a2s) do
-                            local a2 = a2d * d2r
-                            local pa, pb = al + a2, p2 + a2                      -- heading before / after backing round
-                            if pb < 177 * d2r then
-                                local cpa, spa, cpb, spb = cosA(pa), sinA(pa), cosA(pb), sinA(pb)
-                                local f = (sl - 2 * R + 2 * R * cpa - 2 * R * cpb) / sa   -- straight: forwards if > 0
-                                if abs(f) <= maxStraight then
-                                    local y5 = yr + f * ca + 2 * R * spa - 2 * R * spb
-                                    local c = y5 - yB
-                                    if c >= -1e-6 then
-                                        local moves = { { "S", -1, back }, { "A", 1, al } }
-                                        if f >= 0 then moves[#moves + 1] = { "S", 1, f } else moves[#moves + 1] = { "S", -1, -f } end
-                                        moves[#moves + 1] = { "A", 1, a2 }
-                                        moves[#moves + 1] = { "A", -1, be }
-                                        moves[#moves + 1] = { "A", 1, math.pi - pb }
-                                        moves[#moves + 1] = { "S", 1, max(0, c) }
-                                        addCand(moves)
-                                    end
-                                end
-                            end
-                        end
+                addCand(shape1(yr, al, be), { 1, yr, al, be, 0 })
+                if b > 0 then
+                    for _, a2d in ipairs(a2s) do
+                        local a2 = a2d * d2r
+                        addCand(shape2(yr, al, be, a2), { 2, yr, al, be, a2 })
                     end
                 end
             end
@@ -878,11 +890,11 @@ function TramlineGenerator.planStripTurn(geo, la, sA, lb, sB, opts)
             if lim ~= nil and c.moves[mi][3] >= lim then skip = true; break end
         end
         if not skip then
-            local pieces, x, y = trace(c.moves, true, 1.0)
+            local pieces, x, y = trace(c.moves, true, 1.0, true)
             if pieces ~= nil and abs(x - sl) < 0.05 and abs(y - yB) < 0.05 then
                 pieces = trace(c.moves, true)
                 if pieces ~= nil then
-                    best = { pieces = pieces, shifts = c.shifts, cost = c.cost }
+                    best = { pieces = pieces, shifts = c.shifts, cost = c.cost, shape = shapeOf(c.prm) }
                     break
                 end
             elseif pieces == nil and x ~= nil and x >= 2 and x <= 3 then
@@ -923,11 +935,44 @@ function TramlineGenerator.planStripTurn(geo, la, sA, lb, sB, opts)
         if r == nil then fb = was end
         return r
     end
-    local best = coarse()
+    -- the shape of a turn like it that fit, if any (hints: shapeOf): tried
+    -- first, as it came out (from where it folded, if that was nearer)
+    local function hinted()
+        for _, h in ipairs(hints or {}) do
+            local yr = h.noBack and fb or min(h.yr, fb)
+            local moves
+            if h.s == 1 then moves = shape1(yr, h.al, h.be) else moves = shape2(yr, h.al, h.be, h.a2) end
+            if moves ~= nil then
+                local cost, shifts = costOf(moves)
+                if shifts == 0 or opts.reverse then
+                    local pieces, x, y = trace(moves, true, 1.0, true)
+                    if pieces ~= nil and abs(x - sl) < 0.05 and abs(y - yB) < 0.05 then
+                        pieces = trace(moves, true)
+                        if pieces ~= nil then
+                            return { pieces = pieces, shifts = shifts, cost = cost, shape = shapeOf({ h.s, yr, h.al, h.be, h.a2 }) }
+                        end
+                    end
+                end
+            end
+        end
+        return nil
+    end
+    local best = nil
+    if hints ~= nil and #hints > 0 then
+        best = hinted()
+        if best == nil then
+            for _, h in ipairs(hints) do
+                if best == nil and h.fb ~= nil and h.fb < fb - 0.25 and h.fb >= fbMin - 0.01 then best = from(h.fb, hinted) end
+            end
+        end
+    end
+    -- (quick: the coarse search only - from each of the three)
+    local fromHint = best ~= nil
+    if best == nil then best = coarse() end
     if best == nil then best = from(fbLow, coarse) end
-    if best == nil then best = fine() end
+    if best == nil and not quick then best = fine() end
     if best == nil then best = from(fbMin, coarse) end
-    if best ~= nil and best.shifts > 0 then
+    if best ~= nil and best.shifts > 0 and not fromHint and not quick then
         local fwd = from(fbLow, coarse, true)
         if fwd == nil and fb > fbLow + 0.25 then
             fwd = from(fbLow, function() return search(3.75, 3.75, { fb }, { 0 }, true) end)
@@ -947,7 +992,8 @@ function TramlineGenerator.planStripTurn(geo, la, sA, lb, sB, opts)
     local start = TramlineGenerator.stripStartAt(geo, p2x, p2z, ux2, uz2, opts, lead)
     return { P1 = { p1x, p1z }, F = { fx, fz }, B = { bx, bz }, P2 = { p2x, p2z },
              S = { p2x + ux2 * (start.yS or 0), p2z + uz2 * (start.yS or 0) }, pieces = best.pieces,
-             len = len, shifts = best.shifts, foldBack = fb, fold = fold, start = start, from = la.id, to = lb.id, side = sA }
+             len = len, shifts = best.shifts, foldBack = fb, fold = fold, start = start, from = la.id, to = lb.id, side = sA,
+             shape = best.shape }
 end
 
 -- the same turn when no turn fits: forwards round, inside the field if it
@@ -990,19 +1036,172 @@ end
 -- The turn the worker drives from line 'from' (side) to line 'to' for a
 -- vehicle (opts.foldBack, opts.reverse), worked out once per layout and
 -- vehicle. Falls back to a turn that doesn't fit (forced = true).
-function TramlineGenerator.stripTurnFor(geo, fromId, toId, side, opts)
-    geo.stripTurns = geo.stripTurns or {}
+function TramlineGenerator.stripTurnKey(fromId, toId, side, opts)
     local function f(v) return v ~= nil and string.format("%.1f", v) or "-" end
-    local key = string.format("%d>%d%s/%s/%s/%s/%s/%s/%s", fromId, toId, side, f(opts.foldBack), f(opts.wheelbase), f(opts.front),
+    return string.format("%d>%d%s/%s/%s/%s/%s/%s/%s", fromId, toId, side, f(opts.foldBack), f(opts.wheelbase), f(opts.front),
         f(opts.rear), tostring(opts.reverse ~= false), f(opts.rearAxle))
+end
+
+function TramlineGenerator.stripTurnFor(geo, fromId, toId, side, opts, hints, quick)
+    geo.stripTurns = geo.stripTurns or {}
+    local key = TramlineGenerator.stripTurnKey(fromId, toId, side, opts)
     local t = geo.stripTurns[key]
     if t == nil then
         local la, lb = geo.lines[fromId], geo.lines[toId]
-        t = TramlineGenerator.planStripTurn(geo, la, side, lb, side, opts)
+        t = TramlineGenerator.planStripTurn(geo, la, side, lb, side, opts, hints, quick)
             or TramlineGenerator.forcedStripTurn(geo, la, side, lb, side, opts) or false
         geo.stripTurns[key] = t
     end
     return t or nil
+end
+
+-------------------------------------------------------------------------------
+-- Between the parts of a soil strip field (TramlineRoute) the worker keeps
+-- to the strip and the tramlines: turns on the strip from one tramline end
+-- to another, and tramlines driven folded. Which tramline ends the strip
+-- joins up: per end of the tramlines (side A / B), the ends a straight lane
+-- on the strip runs between - the wheels on it all the way, off the crop and
+-- the field edge - in groups (chains of neighbouring tramlines).
+-------------------------------------------------------------------------------
+
+-- how far out from a tramline end (px,pz), (ux,uz) out, the middle of where
+-- the wheels may go on the strip is (nil: nowhere)
+local function laneOut(ctx, px, pz, ux, uz)
+    local y0, y1 = nil, nil
+    local y, lim = 0, 3 * ctx.W
+    while y <= lim do
+        if stripFree(ctx, px + ux * y, pz + uz * y, "wheels") then
+            y0 = y0 or y
+            y1 = y
+        elseif y0 ~= nil then
+            break
+        end
+        y = y + 0.25
+    end
+    if y0 == nil then return nil end
+    return (y0 + y1) * 0.5
+end
+
+-- a straight lane from (ax,az) to (bx,bz) with the wheels on the strip all
+-- the way, off the crop and the field edge
+function TramlineGenerator.laneClear(ctx, ax, az, bx, bz)
+    local L = sqrt((bx - ax) ^ 2 + (bz - az) ^ 2)
+    local n = max(1, ceil(L))
+    for k = 1, n - 1 do
+        local f = k / n
+        if not stripFree(ctx, ax + (bx - ax) * f, az + (bz - az) * f, "wheels") then return false end
+    end
+    return true
+end
+
+-- { A = { [lineId] = group }, B = ..., lane = { A = { [lineId] = {x, z} }, B = ... } }
+-- (worked out once per layout)
+function TramlineGenerator.stripGroups(geo)
+    if geo.stripGroupsOf ~= nil then return geo.stripGroupsOf end
+    local out = { A = {}, B = {} }
+    geo.stripGroupsOf = out
+    local ctx = geo.strip
+    if ctx == nil then return out end
+    local dx, dz = geo.dirX, geo.dirZ
+    local s = geo.spacing or 24
+    for _, side in ipairs({ "A", "B" }) do
+        local ux, uz = dx, dz
+        if side == "A" then ux, uz = -dx, -dz end
+        local ends = {}
+        for _, l in ipairs(geo.lines) do
+            local px, pz = l[1], l[2]
+            if side == "B" then px, pz = l[3], l[4] end
+            local y = laneOut(ctx, px, pz, ux, uz)
+            if y ~= nil then ends[#ends + 1] = { id = l.id, c = l.c or 0, x = px + ux * y, z = pz + uz * y } end
+        end
+        out.lane = out.lane or { A = {}, B = {} }
+        for _, e in ipairs(ends) do out.lane[side][e.id] = { e.x, e.z } end
+        table.sort(ends, function(a, b) return a.c < b.c end)
+        local parent = {}
+        for i = 1, #ends do parent[i] = i end
+        local function find(i)
+            while parent[i] ~= i do
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            end
+            return i
+        end
+        -- (neighbours up to 2.5 tramlines apart: a short tramline left out
+        -- doesn't break the chain)
+        for i = 1, #ends do
+            local a = ends[i]
+            for j = i + 1, #ends do
+                local b = ends[j]
+                if b.c - a.c > 2.5 * s then break end
+                if find(i) ~= find(j) and TramlineGenerator.laneClear(ctx, a.x, a.z, b.x, b.z) then
+                    parent[find(i)] = find(j)
+                end
+            end
+        end
+        for i, e in ipairs(ends) do out[side][e.id] = find(i) end
+    end
+    return out
+end
+
+-- Metres of the polyline pts over the crop (in the field, off the strip and
+-- off the tramlines' tracks), and off the field (outside it, or nearer its
+-- edge than STRIP_EDGE_MARGIN - with front / rear: the vehicle's front or
+-- back end too, driving forwards along pts).
+function TramlineGenerator.cropMeters(geo, pts, front, rear)
+    local ctx = geo.strip
+    if ctx == nil or pts == nil or #geo.lines == 0 then return 0 end
+    local s = geo.spacing or 24
+    local dx, dz = geo.dirX, geo.dirZ
+    local nx, nz = -dz, dx
+    local byK = geo.linesByK
+    if byK == nil then
+        byK = {}
+        for _, l in ipairs(geo.lines) do
+            local k = l.k or 0
+            byK[k] = byK[k] or {}
+            byK[k][#byK[k] + 1] = l
+        end
+        geo.linesByK = byK
+    end
+    local l1 = geo.lines[1]
+    local cFirst = (l1.c or 0) - (l1.k or 0) * s
+    local function onTrack(x, z)
+        local c = x * nx + z * nz
+        local t = x * dx + z * dz
+        local k = floor((c - cFirst) / s + 0.5)
+        for _, l in ipairs(byK[k] or {}) do
+            if abs(c - l.c) < 1.0 and t >= l.t0 - 0.5 and t <= l.t1 + 0.5 then return true end
+        end
+        return false
+    end
+    local m, off = 0, 0
+    for i = 2, #pts do
+        local a, b = pts[i - 1], pts[i]
+        local L = sqrt((b[1] - a[1]) ^ 2 + (b[2] - a[2]) ^ 2)
+        local n = max(1, ceil(L / 0.5))
+        for j = 1, n do
+            local f = (j - 0.5) / n
+            local x, z = a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f
+            local outside = not G.pointInPolygon(ctx.poly, x, z)
+                or G.nearestEdgeDist(ctx.edgeIdx, x, z, 4) < TramlineGenerator.STRIP_EDGE_MARGIN
+            if not outside and (front ~= nil or rear ~= nil) and L > 1e-6 then
+                local hx, hz = (b[1] - a[1]) / L, (b[2] - a[2]) / L
+                for _, d in ipairs({ front or 0, -(rear or 0) }) do
+                    local ex, ez = x + hx * d, z + hz * d
+                    if d ~= 0 and (not G.pointInPolygon(ctx.poly, ex, ez)
+                            or G.nearestEdgeDist(ctx.edgeIdx, ex, ez, 4) < TramlineGenerator.STRIP_EDGE_MARGIN) then
+                        outside = true
+                    end
+                end
+            end
+            if outside then
+                off = off + L / n
+            elseif TramlineGenerator.distEnd(ctx, x, z) >= ctx.W and not onTrack(x, z) then
+                m = m + L / n
+            end
+        end
+    end
+    return m, off
 end
 
 function TramlineGenerator.generate(set, info)
@@ -1472,7 +1671,7 @@ function TramlineGenerator.generate(set, info)
             stripForced, stripForced + stripUsed)
     end
     if W ~= nil and #geo.blocks > 1 then
-        geo.warnings[#geo.warnings + 1] = string.format("the field splits into %d parts - between them the worker drives over the crop (folded)", #geo.blocks)
+        geo.warnings[#geo.warnings + 1] = string.format("the field splits into %d parts - between them the worker goes folded along the soil strip and the tramlines (over the crop only where there is no other way)", #geo.blocks)
     end
     if stripShort > 0 then
         geo.warnings[#geo.warnings + 1] = string.format("%d tramline end(s): no room on the soil strip to drive the whole boom off the crop before folding (where the end of the field is at an angle, or meets a side)",

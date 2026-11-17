@@ -385,8 +385,10 @@ function TramlineSystem:previewRoute(fieldId, job, vx, vz, hx, hz)
     if same and (vx - c.x) ^ 2 + (vz - c.z) ^ 2 < 9 and hx * c.hx + hz * c.hz > 0.9 then return c.route end
     local now = g_time or 0
     if same and now - c.time < 900 then return c.route end
+    -- (soil strip: the ways between the parts only if worked out already -
+    -- the preview doesn't wait for them)
     local route = TramlineRoute.buildJob(geo, vx, vz, hx, hz,
-        { headlandOrder = job.order, corners = job.corners, boomBack = job.boomBack, strip = job.strip })
+        { headlandOrder = job.order, corners = job.corners, boomBack = job.boomBack, strip = job.strip, quickTransit = true })
     self.previewRouteCache = { geo = geo, order = job.order, corners = job.corners, boomBack = job.boomBack, strip = job.strip,
                                x = vx, z = vz, hx = hx, hz = hz, time = now, route = route }
     return route

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.0.3 (17 November 2026)
+
+### Fixes
+
+- **Soil strip: no more driving over the crop from one part of the field to the next.** Where the edge of the field cuts across the tramlines (a notch, or a bend in an end), some tramlines stop short and the field splits into parts. Before, the worker drove straight from the end of one part to the start of the next, over the crop.
+  - It now keeps to the soil strip and the tramlines: it turns along the strip to another tramline, and where it has to get to the other end of the field it drives down a tramline with the boom folded.
+  - It does the parts in the order that needs the least driving between them.
+  - Where a turn on the way doesn't fit on the strip, it goes over the crop only there, the way it does in the parts. It goes straight across only where the strip and the tramlines don't join two parts at all.
+  - The ways between the parts are worked out the first time a worker sets off from a part with a machine. That takes a second or two; after that they are kept, and a job carried on after a reload takes the same ways.
+- Long turns along a soil strip at an angle to the tramlines could not be planned. The planner cut short how far a turn may run along the strip; where the strip runs off at an angle the turn is longer.
+
 ## 1.2.0.2 (16 November 2026)
 
 ### Fixes

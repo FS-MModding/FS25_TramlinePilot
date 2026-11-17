@@ -8,6 +8,7 @@
     3. workAt: is the route a working stretch at a given position?
 
     Route waypoints: { x, z, work = bool, turn = bool, kind = string,
+                       between = true: between two parts of a soil strip field,
                        rl, ri, rd = headland tramline (level, index, direction
                                     of travel) the segment runs along, or nil,
                        rev = true: driven in reverse (backing into a corner,
@@ -21,7 +22,8 @@
 TramlineRoute = {}
 
 local G = TramlineGeom
-local sqrt, abs, min, max = math.sqrt, math.abs, math.min, math.max
+local sqrt, abs, min, max, floor = math.sqrt, math.abs, math.min, math.max, math.floor
+local unpack = unpack or table.unpack
 
 TramlineRoute.MAX_START_DIST = 8      -- metres from a headland tramline to be allowed to start
 TramlineRoute.GATE_MAX_DIST  = 60     -- metres from the field gate marker to the headland tramline
@@ -42,7 +44,7 @@ local function add(route, pts, flags)
         if last == nil or (p[1] - last[1]) ^ 2 + (p[2] - last[2]) ^ 2 >= 0.09 then
             list[#list + 1] = { p[1], p[2], work = flags.work, turn = flags.turn, kind = flags.kind,
                                 rl = p.rl or flags.rl, ri = p.ri or flags.ri, rd = p.rd or flags.rd,
-                                rev = p.rev or flags.rev, act = p.act }
+                                rev = p.rev or flags.rev, act = p.act, between = flags.between }
         end
     end
 end
@@ -196,6 +198,430 @@ function TramlineRoute.cornerPieces(m, boomBack)
     fwd[#fwd + 1] = m.R0
     return rev, fwd
 end
+
+-------------------------------------------------------------------------------
+-- Soil strip: between the parts of the field the worker keeps to the strip
+-- and the tramlines (TramlineGenerator.stripGroups). From the end of the last
+-- tramline of one part: a turn on the strip to another tramline end of the
+-- same stretch of strip - straight into the next part's first tramline, or
+-- into one it drives folded to its other end, turns there, and so on. The
+-- turns are worked out like the ones in a part (and cached with them); one
+-- that doesn't fit on the strip costs CROP_COST for every metre it goes over
+-- the crop or off the field, and so does the straight way, the last resort.
+-- States: a tramline end, coming out of it or going into it.
+-------------------------------------------------------------------------------
+
+TramlineRoute.CROP_COST     = 20    -- m of driving a metre over the crop is worth avoiding
+TramlineRoute.TRANSIT_TURNS = 12    -- most turns worked out finding the ways between parts (per layout, machine and first part)
+TramlineRoute.QUICK_MISS    = 30    -- m added to a turn the quick search found no way for (until searched in full)
+TramlineRoute.ORDER_MAX     = 7     -- parts put in the best order by trying every order (more: nearest next)
+
+local function stateKey(id, side, inn) return id * 4 + (side == "B" and 2 or 0) + (inn and 1 or 0) end
+local function stateOf(key)
+    local r = key % 4
+    return floor(key / 4), (r >= 2) and "B" or "A", (r % 2) == 1
+end
+
+local Transit = {}
+Transit.__index = Transit
+
+
+-- One per layout, machine and the part a job starts with, kept with the
+-- layout: every job like that gets the same ways (the same route again after
+-- a reload), and they are worked out only once.
+function TramlineRoute.transitKey(opts, first)
+    return (TramlineRoute.stripKey(opts) or "-") .. "#" .. tostring(first)
+end
+
+function TramlineRoute.newTransit(geo, opts, first)
+    local mkey = TramlineRoute.transitKey(opts, first)
+    geo.transits = geo.transits or {}
+    if geo.transits[mkey] ~= nil then return geo.transits[mkey] end
+    local self = setmetatable({ geo = geo, opts = opts, first = first, evals = 0, own = {}, turns = {}, missed = {}, ways = {}, orders = {},
+                                lanes = {}, ends = {}, pos = { A = {}, B = {} }, over = 0, overN = 0 }, Transit)
+    geo.transits[mkey] = self
+    self.groups = TramlineGenerator.stripGroups(geo)
+    self.members = { A = {}, B = {} }
+    for _, side in ipairs({ "A", "B" }) do
+        local ids = {}
+        for id in pairs(self.groups[side]) do ids[#ids + 1] = id end
+        table.sort(ids)
+        for _, id in ipairs(ids) do
+            local g = self.groups[side][id]
+            local list = self.members[side][g]
+            if list == nil then
+                list = {}
+                self.members[side][g] = list
+            end
+            list[#list + 1] = id
+        end
+        -- each stretch of strip in order across the field (neighbours: see hopAllowed)
+        for _, list in pairs(self.members[side]) do
+            table.sort(list, function(a, b) return (geo.lines[a].c or 0) < (geo.lines[b].c or 0) end)
+            for i, id in ipairs(list) do self.pos[side][id] = i end
+        end
+    end
+    return self
+end
+
+-- Work out the parts' own turns (as the job drives them) and the ways a job
+-- from part 'first' may take - from it to each other part, and between the
+-- others - in a fixed order, so every such job gets the same.
+function Transit:prepare()
+    if self.ready then return end
+    self.ready = true
+    local geo, opts, first = self.geo, self.opts, self.first
+    for _, blk in ipairs(geo.blocks) do
+        for j = 1, #blk.lines - 1 do
+            local conn = blk.conns and blk.conns[j]
+            if conn ~= nil and conn.kind == "strip" then
+                local t = TramlineGenerator.stripTurnFor(geo, conn.from, conn.to, conn.side, opts) or false
+                self.own[TramlineGenerator.stripTurnKey(conn.from, conn.to, conn.side, opts)] = t
+                self:note(conn.from, conn.to, conn.side, t)
+            end
+        end
+    end
+    local pairs_ = {}
+    for y = 1, #geo.blocks do
+        if y ~= first then pairs_[#pairs_ + 1] = { first, y } end
+    end
+    for x = 1, #geo.blocks do
+        for y = 1, #geo.blocks do
+            if x ~= y and x ~= first and y ~= first then pairs_[#pairs_ + 1] = { x, y } end
+        end
+    end
+    for _, pr in ipairs(pairs_) do
+        local x, y = pr[1], pr[2]
+        local X, E = geo.blocks[x].ends[2], geo.blocks[y].ends[1]
+        local direct = self:direct(X, E)
+        local way = self:findWay(stateKey(X.line, X.side, false), stateKey(E.line, E.side, true), direct.cost)
+        self.ways[x .. ">" .. y] = { way = way, direct = direct, cost = way ~= nil and way.cost or direct.cost }
+    end
+end
+
+-- The straight way from the end X of a part (out of its crop until the
+-- boom has left it, fold) to the start E of another (lined up in front of
+-- it): { fold, pts, cost, bad = metres over the crop or off the field }
+function Transit:direct(X, E)
+    local geo, opts = self.geo, self.opts
+    local lead = TramlineGenerator.STRIP_LEAD
+    local fold = TramlineGenerator.stripFoldAt(geo, X.x, X.z, X.ux, X.uz, opts)
+    local fb = (fold ~= nil) and fold.fb or opts.foldBack
+    local path = G.dubins(X.x + X.ux * fb, X.z + X.uz * fb, G.atan2(X.uz, X.ux), E.x + E.ux * lead, E.z + E.uz * lead,
+        G.atan2(-E.uz, -E.ux), opts.R or geo.radius or 7)
+    if path == nil then return { fold = fold, cost = math.huge, bad = math.huge } end
+    local pts = G.dubinsPoints(path, 0.5)
+    local crop, off = TramlineGenerator.cropMeters(geo, pts, opts.front or TramlineGenerator.STRIP_FRONT,
+        opts.rear or TramlineGenerator.STRIP_REAR)
+    return { fold = fold, pts = pts, bad = crop + off, cost = path.length + TramlineRoute.CROP_COST * (crop + off) }
+end
+
+-- from the end of part x to the start of part y: { way (nil: none on the
+-- strip better than straight there), direct, cost }
+function Transit:between(x, y)
+    self:prepare()
+    return self.ways[x .. ">" .. y]
+end
+
+-- May the worker turn on the strip from line a to line b at 'side' (both on
+-- the same stretch of it)? Where a straight lane on the strip joins their
+-- ends (a turn is a straight along the strip between two curves), or they
+-- are neighbours on it (the way out of a corner, even if the turn doesn't
+-- fit and goes over the crop).
+function Transit:hopAllowed(a, b, side)
+    local pa, pb = self.pos[side][a], self.pos[side][b]
+    if pa == nil or pb == nil then return false end
+    if abs(pa - pb) == 1 then return true end
+    local key = (a < b) and (a .. side .. b) or (b .. side .. a)
+    local v = self.lanes[key]
+    if v == nil then
+        local la, lb = self.groups.lane[side][a], self.groups.lane[side][b]
+        v = la ~= nil and lb ~= nil and TramlineGenerator.laneClear(self.geo.strip, la[1], la[2], lb[1], lb[2])
+        self.lanes[key] = v
+    end
+    return v
+end
+
+-- The turn on the strip from line a to line b at 'side': the turn, false (no
+-- turn at all), nil (not worked out); and its key. (The same turn whether the
+-- boom is still to fold or folded already: where it folds is also where it
+-- turns from.) A part's own turn as the job drives it; the others worked out
+-- here (work): a quick search first; if that finds no way, the full search
+-- the next time it is asked for (only if the turn is still on the best way
+-- then); after TRANSIT_TURNS of them, straight round the way a turn that
+-- doesn't fit goes. (Kept here, not with the parts' turns, so a job is the
+-- same whatever was worked out before it.)
+function Transit:turn(a, b, side, work)
+    local geo = self.geo
+    local key = TramlineGenerator.stripTurnKey(a, b, side, self.opts)
+    local t = self.own[key]
+    if t == nil then t = self.turns[key] end
+    if t == nil and work then
+        local la, lb = geo.lines[a], geo.lines[b]
+        if self.evals >= TramlineRoute.TRANSIT_TURNS then
+            t = TramlineGenerator.forcedStripTurn(geo, la, side, lb, side, self.opts) or false
+        elseif not self.missed[key] then
+            self.evals = self.evals + 1
+            t = TramlineGenerator.planStripTurn(geo, la, side, lb, side, self.opts, self:hints(a, b, side), true)
+            if t == nil then self.missed[key] = true end
+        else
+            self.evals = self.evals + 1
+            t = TramlineGenerator.planStripTurn(geo, la, side, lb, side, self.opts, self:hints(a, b, side))
+                or TramlineGenerator.forcedStripTurn(geo, la, side, lb, side, self.opts) or false
+        end
+        if t ~= nil then
+            self.turns[key] = t
+            self:note(a, b, side, t)
+        end
+    end
+    return t, key
+end
+
+-- Out of line a / into line b at 'side', one way along the strip, to a
+-- neighbour or further: a turn that fit there says it can be done; turns
+-- that didn't fit (two at least, none that did) say it probably can't, from
+-- anywhere.
+function Transit:endKeys(a, b, side)
+    local lines = self.geo.lines
+    local way = ((lines[b].c or 0) > (lines[a].c or 0)) and "+" or "-"
+    local far = abs((self.pos[side][a] or 0) - (self.pos[side][b] or 0)) > 1 and "f" or "n"
+    return { a .. side .. way .. far .. "o", b .. side .. way .. far .. "i" }
+end
+
+function Transit:note(a, b, side, t)
+    if t and not t.forced then
+        -- (what turns cost here over the straight distance between their ends)
+        local ax, az = endOf(self.geo.lines[a], side)
+        local bx, bz = endOf(self.geo.lines[b], side)
+        self.over = self.over + max(0, self:turnCost(t) - sqrt((bx - ax) ^ 2 + (bz - az) ^ 2))
+        self.overN = self.overN + 1
+    end
+    for _, k in ipairs(self:endKeys(a, b, side)) do
+        local e = self.ends[k]
+        if e == nil then
+            e = { fit = 0, failed = 0 }
+            self.ends[k] = e
+        end
+        if t and not t.forced then e.fit = e.fit + 1 else e.failed = e.failed + 1 end
+    end
+end
+
+function Transit:hopelessEnd(a, b, side)
+    for _, k in ipairs(self:endKeys(a, b, side)) do
+        local e = self.ends[k]
+        if e ~= nil and e.fit == 0 and e.failed >= 2 then return true end
+    end
+    return false
+end
+
+-- the shapes of the turns that fit going the same way along the same
+-- stretch of strip, from line a or into line b (nearest first): a turn from
+-- a to b mostly comes out the same, the straight along the strip longer or
+-- shorter
+function Transit:hints(a, b, side)
+    local geo, lines = self.geo, self.geo.lines
+    local up = (lines[b].c or 0) > (lines[a].c or 0)
+    local g = self.groups[side][a]
+    local found = {}
+    for _, m in ipairs(self.members[side][g] or {}) do
+        for _, pr in ipairs({ { a, m }, { m, b } }) do
+            local x, y = pr[1], pr[2]
+            if x ~= y and not (x == a and y == b) and ((lines[y].c or 0) > (lines[x].c or 0)) == up then
+                local key = TramlineGenerator.stripTurnKey(x, y, side, self.opts)
+                local t = self.own[key] or self.turns[key]
+                if t and not t.forced and t.shape ~= nil then
+                    found[#found + 1] = { shape = t.shape, d = abs((lines[y].c or 0) - (lines[x].c or 0)) }
+                end
+            end
+        end
+    end
+    table.sort(found, function(p, q) return p.d < q.d end)
+    local out = {}
+    for i = 1, min(4, #found) do out[i] = found[i].shape end
+    return out
+end
+
+function Transit:turnCost(t)
+    if t.transitCost == nil then
+        local crop = 0
+        if t.forced then
+            for _, pc in ipairs(t.pieces) do
+                local c, off = TramlineGenerator.cropMeters(self.geo, pc.pts, self.opts.front or TramlineGenerator.STRIP_FRONT,
+                    self.opts.rear or TramlineGenerator.STRIP_REAR)
+                crop = crop + c + off
+            end
+        end
+        t.cropMeters = crop
+        t.transitCost = (t.foldBack or 0) + (t.len or 0) + TramlineGenerator.STRIP_LEAD
+            + (t.shifts or 0) * TramlineGenerator.STRIP_SHIFT_COST + TramlineRoute.CROP_COST * crop
+    end
+    return t.transitCost
+end
+
+-- cheapest ways from state 'from' (Dijkstra over the tramline ends; turns not
+-- worked out yet at the straight distance - never more than they turn out);
+-- stops at 'goal' if given. Returns dist, prev.
+function Transit:search(from, goal)
+    local geo = self.geo
+    local dist, prev, done = { [from] = 0 }, {}, {}
+    local heap = { { 0, from } }
+    local function push(c, k)
+        heap[#heap + 1] = { c, k }
+        local i = #heap
+        while i > 1 do
+            local p = floor(i / 2)
+            if heap[p][1] <= heap[i][1] then break end
+            heap[p], heap[i] = heap[i], heap[p]
+            i = p
+        end
+    end
+    local function pop()
+        local top = heap[1]
+        local last = table.remove(heap)
+        if #heap > 0 then
+            heap[1] = last
+            local i = 1
+            while true do
+                local l, r, s = 2 * i, 2 * i + 1, i
+                if l <= #heap and heap[l][1] < heap[s][1] then s = l end
+                if r <= #heap and heap[r][1] < heap[s][1] then s = r end
+                if s == i then break end
+                heap[s], heap[i] = heap[i], heap[s]
+                i = s
+            end
+        end
+        return top[1], top[2]
+    end
+    local function relax(nk, nc, e)
+        if dist[nk] == nil or nc < dist[nk] - 1e-9 then
+            dist[nk], prev[nk] = nc, e
+            push(nc, nk)
+        end
+    end
+    while #heap > 0 do
+        local c, k = pop()
+        if not done[k] then
+            done[k] = true
+            if k == goal then break end
+            local id, side, inn = stateOf(k)
+            if inn then
+                -- the tramline, folded, to its other end
+                local l = geo.lines[id]
+                relax(stateKey(id, otherSide(side), false), c + l.len, { from = k, drive = id, side = side })
+            else
+                local g = self.groups[side][id]
+                local list = g ~= nil and self.members[side][g] or {}
+                local ax, az = endOf(geo.lines[id], side)
+                for _, m in ipairs(list) do
+                    if m ~= id and self:hopAllowed(id, m, side) then
+                        local t, key = self:turn(id, m, side, false)
+                        local ec = nil
+                        if t == nil then
+                            if not self:hopelessEnd(id, m, side) then
+                                -- (at its straight distance and most of what
+                                -- the turns worked out cost over that)
+                                local bx, bz = endOf(geo.lines[m], side)
+                                ec = sqrt((bx - ax) ^ 2 + (bz - az) ^ 2)
+                                if self.overN > 0 then ec = ec + 0.75 * self.over / self.overN end
+                                if self.missed[key] then ec = ec + TramlineRoute.QUICK_MISS end
+                            end
+                        elseif t ~= false then
+                            ec = self:turnCost(t)
+                        end
+                        if ec ~= nil then
+                            relax(stateKey(m, side, true), c + ec, { from = k, hop = true, a = id, b = m, side = side })
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return dist, prev
+end
+
+-- The way from coming out of line fromId at fromSide to going into line toId
+-- at toSide: { cost, steps = { { turn, a, b, side } | { drive = id, side }, ... } }
+-- (a turn first and last), or nil if there is none on the strip that costs
+-- less than maxCost.
+function Transit:findWay(from, goal, maxCost)
+    for _ = 1, 4 * TramlineRoute.TRANSIT_TURNS do
+        local dist, prev = self:search(from, goal)
+        local c = dist[goal]
+        if c == nil or (maxCost ~= nil and c >= maxCost) then return nil end
+        local edges = {}
+        local k = goal
+        while k ~= from do
+            local e = prev[k]
+            table.insert(edges, 1, e)
+            k = e.from
+        end
+        -- the turns on it not worked out yet: work them out and look again
+        local open = false
+        for _, e in ipairs(edges) do
+            if e.hop and self:turn(e.a, e.b, e.side, false) == nil then
+                open = true
+                self:turn(e.a, e.b, e.side, true)
+            end
+        end
+        if not open then
+            local steps = {}
+            for _, e in ipairs(edges) do
+                if e.hop then
+                    steps[#steps + 1] = { turn = self:turn(e.a, e.b, e.side, false), a = e.a, b = e.b, side = e.side }
+                else
+                    steps[#steps + 1] = { drive = e.drive, side = e.side }
+                end
+            end
+            return { cost = c, steps = steps }
+        end
+    end
+    return nil
+end
+
+-- The order to do the parts 'todo' (block numbers) in after part 'from':
+-- the least driving between them (the ways worked out by prepare).
+function Transit:order(from, todo)
+    self:prepare()
+    local n = #todo
+    if n <= 1 then return { todo[1] } end
+    local function cost(x, y) return self.ways[x .. ">" .. y].cost end
+    if n > TramlineRoute.ORDER_MAX then
+        -- nearest (by the way there) next
+        local out, left, cur = {}, {}, from
+        for _, b in ipairs(todo) do left[b] = true end
+        for _ = 1, n do
+            local best, bc = nil, math.huge
+            for _, b in ipairs(todo) do
+                if left[b] and cost(cur, b) < bc then best, bc = b, cost(cur, b) end
+            end
+            out[#out + 1] = best
+            left[best] = nil
+            cur = best
+        end
+        return out
+    end
+    -- every order
+    local best, bestCost = nil, math.huge
+    local perm, used = {}, {}
+    local function rec(depth, c, prevB)
+        if c >= bestCost then return end
+        if depth > n then
+            best, bestCost = { unpack(perm) }, c
+            return
+        end
+        for _, b in ipairs(todo) do
+            if not used[b] then
+                used[b] = true
+                perm[depth] = b
+                rec(depth + 1, c + cost(prevB, b), b)
+                used[b] = false
+            end
+        end
+    end
+    rec(1, 0, from)
+    return best
+end
+
 -- returns route (list of waypoints) or nil, reason
 -------------------------------------------------------------------------------
 
@@ -213,6 +639,13 @@ function TramlineRoute.buildJob(geo, vx, vz, hx, hz, opts)
     local stripOpts = (geo.strip ~= nil) and TramlineRoute.stripOpts(opts.strip, geo) or nil
     local stripForced = 0
     local lastLine, lastSide = nil, nil      -- the tramline driven last (soil strip: its end)
+    local lastBlock = nil                    -- the part done last
+    -- soil strip with more than one part: the ways between them, and the
+    -- order (once the first part is known; opts.quickTransit - a preview:
+    -- only if worked out already, else straight between the parts)
+    local between = nil
+    local stripOrder = nil
+    local moves, movesOver = 0, 0
 
     -- ring paths per level
     local ringPaths = {}
@@ -415,8 +848,19 @@ function TramlineRoute.buildJob(geo, vx, vz, hx, hz, opts)
         guard = guard + 1
         -- the block end to enter next: first one ahead on the ring
         local bestB, bestE, bestDist = nil, nil, math.huge
+        if between ~= nil and lastBlock ~= nil then
+            -- soil strip, after the first part: the order with the least
+            -- driving between the parts (each from its first tramline)
+            if stripOrder == nil then
+                local todo = {}
+                for b = 1, #geo.blocks do if not done[b] then todo[#todo + 1] = b end end
+                stripOrder = between:order(lastBlock, todo)
+            end
+            bestB, bestE = table.remove(stripOrder, 1), 1
+        end
+        local picked = bestB ~= nil
         for b, blk in ipairs(geo.blocks) do
-            if not done[b] then
+            if not done[b] and not picked then
                 -- (soil strip: each part from its first tramline, the way its
                 -- turns are drawn)
                 for e = 1, (stripOpts ~= nil) and 1 or 2 do
@@ -477,21 +921,63 @@ function TramlineRoute.buildJob(geo, vx, vz, hx, hz, opts)
         local startTrim = 0
         if stripOpts ~= nil and lastPoint(route) ~= nil then
             -- from the last block: on out of its crop until the boom has left
-            -- it, fold, over to this one (between parts of the field over the
-            -- crop), in until the boom is over the edge of the crop, unfold
-            -- and back up out of the tramline
+            -- it, fold, along the strip and the tramlines to this one (see
+            -- Transit), in until the boom is over the edge of the crop,
+            -- unfold and back up out of the tramline
             local p = lastPoint(route)
             local prev = route.list[#route.list - 1] or p
             local ux, uz = G.normalize(p[1] - prev[1], p[2] - prev[2])
-            stripOut(route, p[1], p[2], ux, uz, TramlineGenerator.stripFoldAt(geo, p[1], p[2], ux, uz, stripOpts),
-                stripOpts.foldBack, lastLine ~= nil and workReaches(lastLine, lastSide), true)
-            local q = lastPoint(route)
             local lead = TramlineGenerator.STRIP_LEAD
-            local bx, bz = E.x + E.ux * lead, E.z + E.uz * lead
-            local path = G.dubins(q[1], q[2], G.atan2(uz, ux), bx, bz, G.atan2(-E.uz, -E.ux), R)
-            if path ~= nil then add(route, (G.dubinsPoints(path, 0.5)), { work = false, turn = true, kind = "approach" }) end
-            local start = TramlineGenerator.stripStartAt(geo, E.x, E.z, E.ux, E.uz, stripOpts, lead)
-            startTrim = stripIn(route, E.x, E.z, -E.ux, -E.uz, start, workReaches(geo.lines[E.line], E.side, true), "strip")
+            local boomOn = lastLine ~= nil and workReaches(lastLine, lastSide)
+            local bw = (between ~= nil and lastBlock ~= nil) and between:between(lastBlock, bestB) or nil
+            local way = (bw ~= nil) and bw.way or nil
+            moves = moves + 1
+            if way ~= nil then
+                local steps = way.steps
+                local t1 = steps[1].turn
+                local fx, fz = G.normalize(t1.F[1] - t1.P1[1], t1.F[2] - t1.P1[2])
+                stripOut(route, t1.P1[1], t1.P1[2], fx, fz, t1.fold, t1.foldBack, boomOn, true)
+                for si, st in ipairs(steps) do
+                    if st.turn ~= nil then
+                        local t = st.turn
+                        if si > 1 then add(route, { t.F }, { work = false, kind = "transit", between = true }) end   -- on out to the turn
+                        for _, pc in ipairs(t.pieces) do
+                            add(route, pc.pts, { work = false, turn = true, kind = "strip", rev = pc.rev, between = true })
+                        end
+                        if t.forced then stripForced = stripForced + 1 end
+                        if si == #steps then
+                            -- (where it unfolds and how far it backs up: for the boom)
+                            local start = TramlineGenerator.stripStartAt(geo, E.x, E.z, E.ux, E.uz, stripOpts, lead)
+                            startTrim = stripIn(route, t.P2[1], t.P2[2], -E.ux, -E.uz, start,
+                                workReaches(geo.lines[E.line], E.side, true), "strip")
+                        else
+                            add(route, { t.P2 }, { work = false, turn = true, kind = "transit", between = true })   -- into the tramline, folded
+                        end
+                    else
+                        -- along the tramline, folded, to its other end
+                        local ox, oz = endOf(geo.lines[st.drive], otherSide(st.side))
+                        add(route, { { ox, oz } }, { work = false, kind = "transit", between = true })
+                    end
+                end
+            else
+                -- straight there (the last resort; fine where it keeps to the
+                -- strip anyway)
+                local fold0, pts, bad
+                if bw ~= nil then
+                    fold0, pts, bad = bw.direct.fold, bw.direct.pts, bw.direct.bad
+                else
+                    fold0 = TramlineGenerator.stripFoldAt(geo, p[1], p[2], ux, uz, stripOpts)
+                    local fb0 = (fold0 ~= nil) and fold0.fb or stripOpts.foldBack
+                    local path = G.dubins(p[1] + ux * fb0, p[2] + uz * fb0, G.atan2(uz, ux), E.x + E.ux * lead, E.z + E.uz * lead,
+                        G.atan2(-E.uz, -E.ux), R)
+                    pts = (path ~= nil) and G.dubinsPoints(path, 0.5) or nil
+                end
+                if (bad or 0) > 0.5 then movesOver = movesOver + 1 end
+                stripOut(route, p[1], p[2], ux, uz, fold0, stripOpts.foldBack, boomOn, true)
+                if pts ~= nil then add(route, pts, { work = false, turn = true, kind = "approach", between = true }) end
+                local start = TramlineGenerator.stripStartAt(geo, E.x, E.z, E.ux, E.uz, stripOpts, lead)
+                startTrim = stripIn(route, E.x, E.z, -E.ux, -E.uz, start, workReaches(geo.lines[E.line], E.side, true), "strip")
+            end
         elseif H > 0 then
             local en = E.entry[cur.sense]
             transit(en.s)
@@ -601,6 +1087,14 @@ function TramlineRoute.buildJob(geo, vx, vz, hx, hz, opts)
             end
         end
 
+        if lastBlock == nil and stripOpts ~= nil and #geo.blocks > 1 then
+            local tk = TramlineRoute.transitKey(stripOpts, bestB)
+            if not opts.quickTransit or (geo.transits ~= nil and geo.transits[tk] ~= nil and geo.transits[tk].ready) then
+                between = TramlineRoute.newTransit(geo, stripOpts, bestB)
+            end
+        end
+        lastBlock = bestB
+
         -- leave the block
         if H > 0 and exitJ ~= nil then
             add(route, exitJ.pts, { work = false, turn = true, kind = "junction" })
@@ -626,10 +1120,19 @@ function TramlineRoute.buildJob(geo, vx, vz, hx, hz, opts)
 
     local list = route.list
     if #list < 2 then return nil, "nothing to do" end
-    if stripForced > 0 and geo.stripForcedLogged ~= tostring(opts.strip) then
+    -- (soil strip: turns that don't fit on it - the parts' own and between
+    -- them - and moves between parts straight over the crop)
+    list.stripForced, list.movesOver = stripForced, movesOver
+    if (stripForced > 0 or moves > 0) and geo.stripForcedLogged ~= tostring(opts.strip) then
         geo.stripForcedLogged = tostring(opts.strip)       -- (once per layout and machine)
-        TramlineLog.info("[TramlinePilot][route] soil strip: %d turn(s) don't fit on the strip for this machine (%s) - it turns over the crop there",
-            stripForced, tostring(opts.strip))
+        if stripForced > 0 then
+            TramlineLog.info("[TramlinePilot][route] soil strip: %d turn(s) don't fit on the strip for this machine (%s) - it turns over the crop there",
+                stripForced, tostring(opts.strip))
+        end
+        if moves > 0 then
+            TramlineLog.info("[TramlinePilot][route] soil strip: %d move(s) between parts of the field, %d of them over the crop or off the field (no way along the strip and the tramlines)%s",
+                moves, movesOver, between ~= nil and string.format(" - %d turn(s) worked out for them", between.evals) or "")
+        end
     end
     return list
 end
