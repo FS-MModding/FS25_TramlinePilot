@@ -48,7 +48,7 @@ Where the strip is too narrow to turn round in one go, it does a three-point tur
 
 The tramlines stop where the strip begins. Along the sides of the field the crop goes right to the edge.
 
-**Fields in parts:** where the edge of the field cuts across the tramlines, for example a notch in one end, some tramlines stop short and the field splits into parts. The menu tells you how many. Between the parts the worker keeps the boom folded and stays on the strip and the tramlines: it turns along the strip to another tramline, and where it has to get to the other end of the field it drives down a tramline. It does the parts in the order with the least driving between them. The first time a worker sets off on such a field with a machine it takes a second or two to work these ways out.
+**Fields in parts:** where the edge of the field cuts across the tramlines, for example a notch in one end, some tramlines stop short and the field splits into parts. The menu tells you how many. Between the parts the worker keeps the boom folded and stays on the strip and the tramlines: it turns along the strip to another tramline, and where it has to get to the other end of the field it drives down a tramline. It does the parts in the order with the least driving between them. The ground lines show the whole course joined up: the ways between the parts are drawn like the turns, for the job you would start from where you are standing. They are worked out in the background, so they appear a moment after you drive onto the field.
 
 ## Seeing your tramlines
 

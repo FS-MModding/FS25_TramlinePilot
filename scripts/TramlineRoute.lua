@@ -266,36 +266,95 @@ end
 
 -- Work out the parts' own turns (as the job drives them) and the ways a job
 -- from part 'first' may take - from it to each other part, and between the
--- others - in a fixed order, so every such job gets the same.
+-- others - in a fixed order, so every such job gets the same. Done in steps
+-- of at most one turn worked out each (FS25's Lua has no coroutines): a
+-- preview has them done in the background, a step a frame (see queueUp,
+-- TramlineRoute.background); a job does the rest there and then (prepare) -
+-- the same steps either way, so the same ways.
 function Transit:prepare()
-    if self.ready then return end
-    self.ready = true
+    while not self:step() do end
+end
+
+-- one step; true when it is all done
+function Transit:step()
+    if self.ready then return true end
     local geo, opts, first = self.geo, self.opts, self.first
-    for _, blk in ipairs(geo.blocks) do
-        for j = 1, #blk.lines - 1 do
-            local conn = blk.conns and blk.conns[j]
-            if conn ~= nil and conn.kind == "strip" then
-                local t = TramlineGenerator.stripTurnFor(geo, conn.from, conn.to, conn.side, opts) or false
-                self.own[TramlineGenerator.stripTurnKey(conn.from, conn.to, conn.side, opts)] = t
-                self:note(conn.from, conn.to, conn.side, t)
+    local w = self.work
+    if w == nil then
+        w = { own = {}, oi = 1, pairs = {}, pi = 1 }
+        for _, blk in ipairs(geo.blocks) do
+            for j = 1, #blk.lines - 1 do
+                local conn = blk.conns and blk.conns[j]
+                if conn ~= nil and conn.kind == "strip" then w.own[#w.own + 1] = conn end
             end
         end
-    end
-    local pairs_ = {}
-    for y = 1, #geo.blocks do
-        if y ~= first then pairs_[#pairs_ + 1] = { first, y } end
-    end
-    for x = 1, #geo.blocks do
         for y = 1, #geo.blocks do
-            if x ~= y and x ~= first and y ~= first then pairs_[#pairs_ + 1] = { x, y } end
+            if y ~= first then w.pairs[#w.pairs + 1] = { first, y } end
         end
+        for x = 1, #geo.blocks do
+            for y = 1, #geo.blocks do
+                if x ~= y and x ~= first and y ~= first then w.pairs[#w.pairs + 1] = { x, y } end
+            end
+        end
+        self.work = w
     end
-    for _, pr in ipairs(pairs_) do
-        local x, y = pr[1], pr[2]
+    -- 1. the parts' own turns (worked out already, mostly: then all at once)
+    while w.oi <= #w.own do
+        local conn = w.own[w.oi]
+        local key = TramlineGenerator.stripTurnKey(conn.from, conn.to, conn.side, opts)
+        local known = geo.stripTurns ~= nil and geo.stripTurns[key] ~= nil
+        local t = TramlineGenerator.stripTurnFor(geo, conn.from, conn.to, conn.side, opts) or false
+        self.own[key] = t
+        self:note(conn.from, conn.to, conn.side, t)
+        w.oi = w.oi + 1
+        if not known then return false end
+    end
+    -- 2. the ways between the parts, a pair at a time
+    local pr = w.pairs[w.pi]
+    if pr == nil then
+        self.ready, self.work = true, nil
+        geo.transitVersion = (geo.transitVersion or 0) + 1
+        return true
+    end
+    local x, y = pr[1], pr[2]
+    if w.cur == nil then
         local X, E = geo.blocks[x].ends[2], geo.blocks[y].ends[1]
         local direct = self:direct(X, E)
-        local way = self:findWay(stateKey(X.line, X.side, false), stateKey(E.line, E.side, true), direct.cost)
-        self.ways[x .. ">" .. y] = { way = way, direct = direct, cost = way ~= nil and way.cost or direct.cost }
+        w.cur = { from = stateKey(X.line, X.side, false), goal = stateKey(E.line, E.side, true), maxCost = direct.cost,
+                  direct = direct, iter = 0 }
+        return false
+    end
+    if self:wayStep(w.cur) then
+        local c = w.cur
+        self.ways[x .. ">" .. y] = { way = c.way, direct = c.direct, cost = c.way ~= nil and c.way.cost or c.direct.cost }
+        w.cur, w.pi = nil, w.pi + 1
+    end
+    return false
+end
+
+-- to be worked out in the background (a preview that doesn't wait for it;
+-- first: before the others - the start the player is at)
+function Transit:queueUp(first)
+    if self.ready then return end
+    local q = TramlineRoute.queue
+    if self.queued then
+        if not first then return end
+        for i, t in ipairs(q) do
+            if t == self then table.remove(q, i); break end
+        end
+    end
+    self.queued = true
+    if first then table.insert(q, 1, self) else q[#q + 1] = self end
+end
+
+TramlineRoute.queue = {}
+
+-- every frame: a step of the ways being worked out in the background
+function TramlineRoute.background()
+    local tr = TramlineRoute.queue[1]
+    if tr ~= nil and tr:step() then
+        tr.queued = false
+        table.remove(TramlineRoute.queue, 1)
     end
 end
 
@@ -539,43 +598,42 @@ function Transit:search(from, goal)
     return dist, prev
 end
 
--- The way from coming out of line fromId at fromSide to going into line toId
--- at toSide: { cost, steps = { { turn, a, b, side } | { drive = id, side }, ... } }
--- (a turn first and last), or nil if there is none on the strip that costs
--- less than maxCost.
-function Transit:findWay(from, goal, maxCost)
-    for _ = 1, 4 * TramlineRoute.TRANSIT_TURNS do
-        local dist, prev = self:search(from, goal)
-        local c = dist[goal]
-        if c == nil or (maxCost ~= nil and c >= maxCost) then return nil end
-        local edges = {}
-        local k = goal
-        while k ~= from do
-            local e = prev[k]
-            table.insert(edges, 1, e)
-            k = e.from
-        end
-        -- the turns on it not worked out yet: work them out and look again
-        local open = false
-        for _, e in ipairs(edges) do
-            if e.hop and self:turn(e.a, e.b, e.side, false) == nil then
-                open = true
-                self:turn(e.a, e.b, e.side, true)
-            end
-        end
-        if not open then
-            local steps = {}
-            for _, e in ipairs(edges) do
-                if e.hop then
-                    steps[#steps + 1] = { turn = self:turn(e.a, e.b, e.side, false), a = e.a, b = e.b, side = e.side }
-                else
-                    steps[#steps + 1] = { drive = e.drive, side = e.side }
-                end
-            end
-            return { cost = c, steps = steps }
+-- One step of finding the way st.from (coming out of a tramline end) ->
+-- st.goal (going into one) on the strip and the tramlines, cheaper than
+-- st.maxCost: the cheapest way by what is known (turns not worked out yet at
+-- their straight distance); if a turn on it isn't worked out, work that one
+-- out and look again next step. True when done: st.way = { cost, steps =
+-- { { turn, a, b, side } | { drive = id, side }, ... } } (a turn first and
+-- last), or nil.
+function Transit:wayStep(st)
+    st.iter = st.iter + 1
+    if st.iter > 4 * TramlineRoute.TRANSIT_TURNS then return true end
+    local dist, prev = self:search(st.from, st.goal)
+    local c = dist[st.goal]
+    if c == nil or (st.maxCost ~= nil and c >= st.maxCost) then return true end
+    local edges = {}
+    local k = st.goal
+    while k ~= st.from do
+        local e = prev[k]
+        table.insert(edges, 1, e)
+        k = e.from
+    end
+    for _, e in ipairs(edges) do
+        if e.hop and self:turn(e.a, e.b, e.side, false) == nil then
+            self:turn(e.a, e.b, e.side, true)
+            return false
         end
     end
-    return nil
+    local steps = {}
+    for _, e in ipairs(edges) do
+        if e.hop then
+            steps[#steps + 1] = { turn = self:turn(e.a, e.b, e.side, false), a = e.a, b = e.b, side = e.side }
+        else
+            steps[#steps + 1] = { drive = e.drive, side = e.side }
+        end
+    end
+    st.way = { cost = c, steps = steps }
+    return true
 end
 
 -- The order to do the parts 'todo' (block numbers) in after part 'from':
@@ -584,7 +642,10 @@ function Transit:order(from, todo)
     self:prepare()
     local n = #todo
     if n <= 1 then return { todo[1] } end
-    local function cost(x, y) return self.ways[x .. ">" .. y].cost end
+    local function cost(x, y)
+        local w = self.ways[x .. ">" .. y]
+        return w ~= nil and w.cost or math.huge
+    end
     if n > TramlineRoute.ORDER_MAX then
         -- nearest (by the way there) next
         local out, left, cur = {}, {}, from
@@ -642,9 +703,11 @@ function TramlineRoute.buildJob(geo, vx, vz, hx, hz, opts)
     local lastBlock = nil                    -- the part done last
     -- soil strip with more than one part: the ways between them, and the
     -- order (once the first part is known; opts.quickTransit - a preview:
-    -- only if worked out already, else straight between the parts)
+    -- only if worked out already, else straight between the parts for now
+    -- and worked out in the background)
     local between = nil
     local stripOrder = nil
+    local transitPending = false
     local moves, movesOver = 0, 0
 
     -- ring paths per level
@@ -956,7 +1019,7 @@ function TramlineRoute.buildJob(geo, vx, vz, hx, hz, opts)
                     else
                         -- along the tramline, folded, to its other end
                         local ox, oz = endOf(geo.lines[st.drive], otherSide(st.side))
-                        add(route, { { ox, oz } }, { work = false, kind = "transit", between = true })
+                        add(route, { { ox, oz } }, { work = false, kind = "transit-line", between = true })
                     end
                 end
             else
@@ -1088,9 +1151,12 @@ function TramlineRoute.buildJob(geo, vx, vz, hx, hz, opts)
         end
 
         if lastBlock == nil and stripOpts ~= nil and #geo.blocks > 1 then
-            local tk = TramlineRoute.transitKey(stripOpts, bestB)
-            if not opts.quickTransit or (geo.transits ~= nil and geo.transits[tk] ~= nil and geo.transits[tk].ready) then
-                between = TramlineRoute.newTransit(geo, stripOpts, bestB)
+            local tr = TramlineRoute.newTransit(geo, stripOpts, bestB)
+            if not opts.quickTransit or tr.ready then
+                between = tr
+            else
+                tr:queueUp(opts.transitFirst)
+                transitPending = true
             end
         end
         lastBlock = bestB
@@ -1122,8 +1188,8 @@ function TramlineRoute.buildJob(geo, vx, vz, hx, hz, opts)
     if #list < 2 then return nil, "nothing to do" end
     -- (soil strip: turns that don't fit on it - the parts' own and between
     -- them - and moves between parts straight over the crop)
-    list.stripForced, list.movesOver = stripForced, movesOver
-    if (stripForced > 0 or moves > 0) and geo.stripForcedLogged ~= tostring(opts.strip) then
+    list.stripForced, list.movesOver, list.transitPending = stripForced, movesOver, transitPending
+    if (stripForced > 0 or moves > 0) and not opts.quickTransit and geo.stripForcedLogged ~= tostring(opts.strip) then
         geo.stripForcedLogged = tostring(opts.strip)       -- (once per layout and machine)
         if stripForced > 0 then
             TramlineLog.info("[TramlinePilot][route] soil strip: %d turn(s) don't fit on the strip for this machine (%s) - it turns over the crop there",
@@ -1221,11 +1287,14 @@ end
 -- direction, each starting straight into that block. Starting mid-field
 -- means the headland was done first, so it is left out - unless the set
 -- sprays it last. Cached on the layout.
-function TramlineRoute.joinCandidates(geo, order, corners, boomBack, strip)
+function TramlineRoute.joinCandidates(geo, order, corners, boomBack, strip, quick)
     local key = (order == "last") and "last" or "off"
     local cacheKey = key .. (corners and string.format("+corners%.1f", boomBack or TramlineRoute.BOOM_BACK) or "") .. (strip and ("+strip" .. strip) or "")
+        .. (quick and "+quick" or "")
     geo.joinCache = geo.joinCache or {}
-    if geo.joinCache[cacheKey] ~= nil then return geo.joinCache[cacheKey] end
+    local cached = geo.joinCache[cacheKey]
+    -- (quick - a preview: built again once more ways between parts are worked out)
+    if cached ~= nil and (not quick or cached.tv == (geo.transitVersion or 0)) then return cached end
     local list = {}
     local H = geo.headlands or 0
     for _, blk in ipairs(geo.blocks or {}) do
@@ -1251,7 +1320,7 @@ function TramlineRoute.joinCandidates(geo, order, corners, boomBack, strip)
             end
             for _, st in ipairs(starts) do
                 local route = TramlineRoute.tagIndices(TramlineRoute.buildJob(geo, st[1], st[2], st[3], st[4],
-                    { headlandOrder = key, corners = corners, boomBack = boomBack, strip = strip }))
+                    { headlandOrder = key, corners = corners, boomBack = boomBack, strip = strip, quickTransit = quick }))
                 if route ~= nil then
                     list[#list + 1] = { route = route, sx = st[1], sz = st[2], hx = st[3], hz = st[4], order = key,
                                         corners = corners, boomBack = boomBack, strip = strip }
@@ -1259,6 +1328,7 @@ function TramlineRoute.joinCandidates(geo, order, corners, boomBack, strip)
             end
         end
     end
+    list.tv = geo.transitVersion or 0
     geo.joinCache[cacheKey] = list
     return list
 end
@@ -1266,9 +1336,9 @@ end
 -- A new job joining the layout where the vehicle is (on a main tramline or
 -- a turn): the candidate that passes over the least spraying before it.
 -- Returns { cand, at = resumeIndex result } or nil
-function TramlineRoute.findJoin(geo, order, vx, vz, hx, hz, corners, boomBack, strip)
+function TramlineRoute.findJoin(geo, order, vx, vz, hx, hz, corners, boomBack, strip, quick)
     local best = nil
-    for _, c in ipairs(TramlineRoute.joinCandidates(geo, order, corners, boomBack, strip)) do
+    for _, c in ipairs(TramlineRoute.joinCandidates(geo, order, corners, boomBack, strip, quick)) do
         local at = TramlineRoute.resumeIndex(c.route, 1, vx, vz, hx, hz)
         if at ~= nil and (best == nil or at.skipped < best.at.skipped) then
             best = { cand = c, at = at }

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.0.4 (17 November 2026)
+
+### Changes
+
+- **Soil strip fields in parts: the course is drawn joined up.** The ground lines (Alt+4) now show the ways between the parts as well, drawn like the turns, so you see the whole course from the start to the finish flag. They show the job you would start from where you are standing, or the job under way.
+- The ways between the parts are now worked out in the background, a little each frame, so the game no longer stops for a few seconds after you press Generate on a field in parts. The lines between the parts and the finish flag appear a moment after you drive onto the field. If you start the worker before that, it finishes the work first (a second or two, once).
+
 ## 1.2.0.3 (17 November 2026)
 
 ### Fixes

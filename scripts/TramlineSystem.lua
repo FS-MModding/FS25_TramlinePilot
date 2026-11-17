@@ -315,7 +315,7 @@ function TramlineSystem:planStart(fieldId, vx, vz, hx, hz, forceNew, preview, ve
     end
 
     -- 3. a new job from the main tramline or turn the vehicle is on
-    local j = TramlineRoute.findJoin(geo, order, vx, vz, hx, hz, corners, boomBack, strip)
+    local j = TramlineRoute.findJoin(geo, order, vx, vz, hx, hz, corners, boomBack, strip, preview)
     if j ~= nil then
         local c = j.cand
         return { kind = "new", route = c.route, at = j.at, joined = true,
@@ -339,7 +339,7 @@ function TramlineSystem.makeCourse(route, startIx, showStart, job)
     if route == nil or #route < 2 then return nil end
     startIx = math.max(1, math.min(startIx or 1, #route))
     local s, f = route[startIx], route[#route]
-    local course = { sx = s[1], sz = s[2], fx = f[1], fz = f[2], showStart = showStart }
+    local course = { sx = s[1], sz = s[2], fx = f[1], fz = f[2], showStart = showStart, route = route }
     if job == nil then
         course.finishSub = distText(TramlineRoute.lengthFrom(route, startIx)) .. " course"
         return course
@@ -380,17 +380,19 @@ function TramlineSystem:previewRoute(fieldId, job, vx, vz, hx, hz)
     local geo = self.store:getGeometry(fieldId)
     if geo == nil or job == nil then return nil end
     local c = self.previewRouteCache
+    -- (and built again once more ways between soil strip parts are worked out)
     local same = c ~= nil and c.geo == geo and c.order == job.order and c.corners == job.corners and c.boomBack == job.boomBack
-        and c.strip == job.strip
+        and c.strip == job.strip and c.tv == (geo.transitVersion or 0)
     if same and (vx - c.x) ^ 2 + (vz - c.z) ^ 2 < 9 and hx * c.hx + hz * c.hz > 0.9 then return c.route end
     local now = g_time or 0
     if same and now - c.time < 900 then return c.route end
     -- (soil strip: the ways between the parts only if worked out already -
     -- the preview doesn't wait for them)
     local route = TramlineRoute.buildJob(geo, vx, vz, hx, hz,
-        { headlandOrder = job.order, corners = job.corners, boomBack = job.boomBack, strip = job.strip, quickTransit = true })
+        { headlandOrder = job.order, corners = job.corners, boomBack = job.boomBack, strip = job.strip, quickTransit = true,
+          transitFirst = true })
     self.previewRouteCache = { geo = geo, order = job.order, corners = job.corners, boomBack = job.boomBack, strip = job.strip,
-                               x = vx, z = vz, hx = hx, hz = hz, time = now, route = route }
+                               x = vx, z = vz, hx = hx, hz = hz, time = now, route = route, tv = geo.transitVersion or 0 }
     return route
 end
 
@@ -751,6 +753,9 @@ end
 
 function TramlineSystem:updateInner(dt)
     TramlineLog.update(dt)
+    -- soil strip fields in parts: a step of the ways between them being
+    -- worked out for a preview
+    TramlineRoute.background()
     -- PF registers its globals during mod loading; apply our switch on the
     -- first frame so we're sure everything exists.
     if self.pendingPFApply then

@@ -58,6 +58,31 @@ local function drawLayout(geo, cam)
     for _, pl in ipairs(paths.rings) do D.groundPath(pl, true, O.COLOR_HEADLAND, O.W_HEADLAND, 0.95, nil, cam, O.DRAW_RADIUS) end
 end
 
+-- The ways between the parts of a soil strip field on a course (the parts'
+-- own tramlines and turns are the layout): turns along the strip, drawn like
+-- the turns (the tramlines it drives down folded are drawn already). Not
+-- while they are still being worked out (the course goes straight between
+-- the parts until then). Worked out once per route.
+function TramlineOverlay.betweenPaths(route)
+    if route == nil or route.transitPending then return {} end
+    if route.betweenPaths ~= nil then return route.betweenPaths end
+    local out, cur = {}, nil
+    for i = 2, #route do
+        local a, b = route[i - 1], route[i]
+        if b.between and b.kind ~= "transit-line" then
+            if cur == nil then
+                cur = { { a[1], a[2] } }
+                out[#out + 1] = cur
+            end
+            cur[#cur + 1] = { b[1], b[2] }
+        else
+            cur = nil
+        end
+    end
+    route.betweenPaths = out
+    return out
+end
+
 -- the worker's way ahead: green where it sprays, blue where it does not,
 -- chevrons just in front of it
 local function drawWayAhead(route, ix, cam)
@@ -108,6 +133,13 @@ function TramlineOverlay:draw()
                 if MathUtil.vector2LengthSq(mx - cx, mz - cz) < r2 * 4 then drawLayout(geo, cam) end
             end
         end
+    end
+
+    -- the course's ways between the parts of a soil strip field: the course
+    -- all joined up
+    local crs = sys ~= nil and sys.course or nil
+    if crs ~= nil and crs.route ~= nil then
+        for _, pl in ipairs(O.betweenPaths(crs.route)) do D.groundPath(pl, false, O.COLOR_CURVE, O.W_CURVE, 0.88, nil, cam, O.DRAW_RADIUS) end
     end
 
     -- the worker's way ahead
